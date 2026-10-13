@@ -39,14 +39,14 @@
 
 ## Why
 
-- What user problem does this solve? Teams need a concrete starting point for building and validating new Kestra plugins without recreating the same project scaffolding from scratch.
-- Why would a team adopt this plugin in a workflow? It gives plugin authors a ready-made reference repo they can adapt alongside their own build, test, and publishing workflow.
-- What operational/business outcome does it enable? It shortens plugin delivery time, reduces setup mistakes, and makes internal or partner plugin development more repeatable.
+- What user problem does this solve? Organizations need automated, scheduled visibility into their Mercury business banking data without manual exports or custom scripts.
+- Why would a team adopt this plugin in a workflow? It enables teams to incorporate financial data directly into declarative data pipelines, accounting reconciliation flows, and balance threshold monitors.
+- What operational/business outcome does it enable? Reliable, automated access to banking data with robust pagination, rate-limit retries, and secure credential handling.
 
 ## What
 
 - Provides plugin components under `io.kestra.plugin.mercury`.
-- Includes classes such as `Example`, `Trigger`.
+- Exposes tasks to query Mercury bank accounts (`io.kestra.plugin.mercury.accounts.List`, `io.kestra.plugin.mercury.accounts.Get`).
 
 ## Running Kestra locally with this plugin
 

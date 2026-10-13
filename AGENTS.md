@@ -3,13 +3,13 @@
 ## What
 
 - Provides plugin components under `io.kestra.plugin.mercury`.
-- Includes classes such as `Example`, `Trigger`.
+- Includes tasks under `io.kestra.plugin.mercury.accounts` (`List`, `Get`).
 
 ## Why
 
-- What user problem does this solve? Teams need a concrete starting point for building and validating new Kestra plugins without recreating the same project scaffolding from scratch.
-- Why would a team adopt this plugin in a workflow? It gives plugin authors a ready-made reference repo they can adapt alongside their own build, test, and publishing workflow.
-- What operational/business outcome does it enable? It shortens plugin delivery time, reduces setup mistakes, and makes internal or partner plugin development more repeatable.
+- What user problem does this solve? Organizations need automated visibility and orchestration over their Mercury business bank accounts and cash balances directly from Kestra workflows.
+- Why would a team adopt this plugin in a workflow? It allows scheduled balance checks, financial event handling, and automated reporting without custom glue code or manual reconciliation.
+- What operational/business outcome does it enable? Reliable, automated access to banking data with robust rate-limit handling, pagination, and secure credential management.
 
 ## How
 
@@ -18,6 +18,8 @@
 Single-module plugin. Source packages under `io.kestra.plugin`:
 
 - `mercury`
+- `mercury.accounts`
+- `mercury.model`
 
 Infrastructure dependencies (Docker Compose services):
 
@@ -25,13 +27,22 @@ Infrastructure dependencies (Docker Compose services):
 
 ### Key Plugin Classes
 
-- `io.kestra.plugin.mercury.Example`
+- `io.kestra.plugin.mercury.AbstractMercuryConnection`
+- `io.kestra.plugin.mercury.accounts.List`
+- `io.kestra.plugin.mercury.accounts.Get`
 
 ### Project Structure
 
 ```
 plugin-mercury/
 ├── src/main/java/io/kestra/plugin/mercury/
+│   ├── AbstractMercuryConnection.java
+│   ├── accounts/
+│   │   ├── List.java
+│   │   └── Get.java
+│   └── model/
+│       ├── Account.java
+│       └── AccountPage.java
 ├── src/test/java/io/kestra/plugin/mercury/
 ├── build.gradle
 └── README.md

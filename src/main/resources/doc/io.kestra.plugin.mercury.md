@@ -1,16 +1,12 @@
-This is the Kestra plugin template. Use it as a starting point for building a new plugin.
+Connect to Mercury, the digital business bank, to manage and inspect bank accounts within Kestra workflows.
 
-## What this template ships
+## Authentication
 
-- `Example` is a sample `RunnableTask` that reverses an input string.
-- `Trigger` is a sample polling trigger that fires an execution at random.
+Mercury uses Bearer token authentication. Generate an API token from your Mercury dashboard with the required read scopes. The token typically begins with the `secret-token:` prefix.
 
-## How to build your plugin
+Store your token in Kestra secrets and access it using `{{ secret('MERCURY_API_TOKEN') }}`.
 
-1. Rename the package `io.kestra.plugin.mercury` to your own, for example `io.kestra.plugin.myservice`.
-2. Update `group`, `name`, `title`, and `description` in `src/main/resources/metadata/index.yaml`.
-3. Replace `src/main/resources/icons/plugin-icon.svg` with your service's icon.
-4. Replace the `Example` and `Trigger` classes with your real tasks and triggers.
-5. Replace this how-to with documentation for your plugin.
+## Available Tasks
 
-Run `./gradlew lintPluginDocs` before pushing to validate the plugin documentation.
+- `io.kestra.plugin.mercury.accounts.List`: List all Mercury bank accounts with automatic cursor-based pagination and flexible fetch types (`FETCH`, `FETCH_ONE`, `STORE`, `NONE`).
+- `io.kestra.plugin.mercury.accounts.Get`: Retrieve full details of a specific Mercury bank account by its ID.

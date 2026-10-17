@@ -26,6 +26,11 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -41,11 +46,13 @@ public abstract class AbstractMercuryConnection extends Task {
 
     public static final String DEFAULT_BASE_URL = "https://api.mercury.com/api/v1";
     public static final int DEFAULT_MAX_PAGE_CAP = 100;
-    static final int MAX_RETRY_ATTEMPTS = 5;
+    private static final int MAX_RETRY_ATTEMPTS = 5;
+    private static final long INITIAL_BACKOFF_MS = 1_000L;
+    private static final long MAX_BACKOFF_MS = 30_000L;
 
     @Schema(
         title = "Mercury API base URL",
-        description = "Base URL for the Mercury API."
+        description = "Base URL for the Mercury API. Override for the Mercury sandbox (https://api-sandbox.mercury.com/api/v1). Must use HTTPS, except for loopback hosts (localhost, 127.0.0.1, ::1) during local testing."
     )
     @PluginProperty(group = "connection")
     @Builder.Default
@@ -60,14 +67,6 @@ public abstract class AbstractMercuryConnection extends Task {
     @NotNull
     private Property<String> apiToken;
 
-    @Builder.Default
-    @ToString.Exclude
-    long initialBackoffMs = 1_000L;
-
-    @Builder.Default
-    @ToString.Exclude
-    long maxBackoffMs = 30_000L;
-
     public record PageResult<T>(List<T> items, String nextCursor) {}
 
     @FunctionalInterface
@@ -76,13 +75,32 @@ public abstract class AbstractMercuryConnection extends Task {
     }
 
     protected HttpClient createClient(RunContext runContext) throws Exception {
+        var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
+        validateBaseUrl(rBaseUrl);
+
         var rToken = runContext.render(this.apiToken).as(String.class)
             .orElseThrow(() -> new IllegalArgumentException("apiToken is required"));
 
+        var auth = new io.kestra.core.http.client.configurations.AbstractAuthConfiguration() {
+            @Override
+            public AuthType getType() {
+                return AuthType.BEARER;
+            }
+
+            @Override
+            public void configure(org.apache.hc.client5.http.impl.classic.HttpClientBuilder builder, RunContext ctx) {
+                builder.addRequestInterceptorFirst((request, entity, context) ->
+                    request.setHeader(new org.apache.hc.core5.http.message.BasicHeader("Authorization", "Bearer " + rToken))
+                );
+                try {
+                    builder.getClass().getMethod("disableAutomaticRetries").invoke(builder);
+                } catch (Exception ignored) {
+                }
+            }
+        };
+
         var httpConfiguration = HttpConfiguration.builder()
-            .auth(BearerAuthConfiguration.builder()
-                .token(Property.ofValue(rToken))
-                .build())
+            .auth(auth)
             .build();
 
         return new HttpClient(runContext, httpConfiguration);
@@ -91,6 +109,8 @@ public abstract class AbstractMercuryConnection extends Task {
     protected <T> T request(HttpClient client, RunContext runContext, String path,
                             Map<String, Object> queryParams, TypeReference<T> typeRef) throws Exception {
         var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
+        validateBaseUrl(rBaseUrl);
+
         var uri = buildUri(rBaseUrl, path, queryParams);
         var request = HttpRequest.builder()
             .method("GET")
@@ -140,11 +160,13 @@ public abstract class AbstractMercuryConnection extends Task {
                 break;
             }
 
-            currentCursor = nextCursor;
-        }
+            if (pageCount >= pageCap) {
+                throw new IllegalStateException(
+                    "Pagination reached the maximum pageCap of " + pageCap +
+                    " but more accounts remain. Increase 'pageCap' on the task to fetch more pages.");
+            }
 
-        if (pageCount >= pageCap) {
-            logger.warn("Pagination reached maximum page cap of {}", pageCap);
+            currentCursor = nextCursor;
         }
 
         return totalItems;
@@ -153,7 +175,7 @@ public abstract class AbstractMercuryConnection extends Task {
     private <T> T executeWithRetry(HttpClient client, RunContext runContext,
                                    HttpRequest request, TypeReference<T> typeRef) throws Exception {
         var logger = runContext.logger();
-        var backoffMs = this.initialBackoffMs;
+        var backoffMs = INITIAL_BACKOFF_MS;
 
         for (var attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
             try {
@@ -166,7 +188,11 @@ public abstract class AbstractMercuryConnection extends Task {
             } catch (HttpClientResponseException e) {
                 var status = extractStatusCode(e);
                 if (status == 429 && attempt < MAX_RETRY_ATTEMPTS) {
-                    var waitMs = extractRetryAfterMs(e, backoffMs);
+                    var waitMs = extractRetryAfterMs(runContext, e, backoffMs);
+                    if (waitMs > MAX_BACKOFF_MS) {
+                        logger.warn("Retry-After wait of {}ms exceeds max backoff cap of {}ms; failing request", waitMs, MAX_BACKOFF_MS);
+                        throw mapError(429, e);
+                    }
                     logger.warn("Rate limited (429), retry {}/{} after {}ms", attempt, MAX_RETRY_ATTEMPTS, waitMs);
                     try {
                         Thread.sleep(waitMs);
@@ -174,7 +200,7 @@ public abstract class AbstractMercuryConnection extends Task {
                         Thread.currentThread().interrupt();
                         throw new IllegalStateException("Interrupted during rate limit backoff", ie);
                     }
-                    backoffMs = Math.min(backoffMs * 2, this.maxBackoffMs);
+                    backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
                     continue;
                 }
                 throw mapError(status, e);
@@ -192,19 +218,38 @@ public abstract class AbstractMercuryConnection extends Task {
         return JacksonMapper.ofJson().readValue(body, typeRef);
     }
 
-    private long extractRetryAfterMs(HttpClientResponseException e, long defaultBackoffMs) {
+    private long extractRetryAfterMs(RunContext runContext, HttpClientResponseException e, long defaultBackoffMs) {
         try {
             var response = e.getResponse();
             if (response != null && response.getHeaders() != null) {
-                var retryAfter = response.getHeaders().get("Retry-After");
-                if (retryAfter != null && !retryAfter.isBlank()) {
-                    return Long.parseLong(retryAfter.trim()) * 1_000L;
+                var retryAfterOpt = response.getHeaders().firstValue("Retry-After");
+                if (retryAfterOpt != null && retryAfterOpt.isPresent()) {
+                    var raw = retryAfterOpt.get().trim();
+                    if (!raw.isBlank()) {
+                        return parseRetryAfterHeader(runContext, raw, defaultBackoffMs);
+                    }
                 }
             }
         } catch (Exception ignored) {
-            // header missing or unparseable — fall back to default
+            // header missing or inaccessible — fall back to default
         }
         return defaultBackoffMs;
+    }
+
+    private long parseRetryAfterHeader(RunContext runContext, String raw, long defaultBackoffMs) {
+        try {
+            long seconds = Long.parseLong(raw);
+            return Math.max(0L, seconds * 1_000L);
+        } catch (NumberFormatException nfe) {
+            try {
+                ZonedDateTime date = ZonedDateTime.parse(raw, DateTimeFormatter.RFC_1123_DATE_TIME);
+                long waitMs = Duration.between(Instant.now(), date.toInstant()).toMillis();
+                return Math.max(0L, waitMs);
+            } catch (DateTimeParseException dtpe) {
+                runContext.logger().warn("Unparseable Retry-After header '{}', falling back to bounded exponential backoff", raw);
+                return defaultBackoffMs;
+            }
+        }
     }
 
     private Exception mapError(int statusCode, HttpClientException e) {
@@ -240,6 +285,48 @@ public abstract class AbstractMercuryConnection extends Task {
             return responseException.getResponse().getStatus().getCode();
         }
         return 0;
+    }
+
+    static void validateBaseUrl(String baseUrl) {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalArgumentException("baseUrl must not be empty");
+        }
+        URI uri;
+        try {
+            uri = URI.create(baseUrl);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid baseUrl URI '" + baseUrl + "': " + e.getMessage(), e);
+        }
+
+        var scheme = uri.getScheme();
+        if (scheme == null) {
+            throw new IllegalArgumentException("baseUrl must specify an HTTP or HTTPS scheme: " + baseUrl);
+        }
+
+        var lowerScheme = scheme.toLowerCase();
+        if ("https".equals(lowerScheme)) {
+            return;
+        }
+
+        if ("http".equals(lowerScheme)) {
+            var host = uri.getHost();
+            if (isLoopbackHost(host)) {
+                return;
+            }
+            throw new IllegalArgumentException(
+                "Insecure HTTP baseUrl is only permitted for loopback hosts (localhost, 127.0.0.1, ::1). " +
+                "Production and sandbox Mercury environments require HTTPS: " + baseUrl);
+        }
+
+        throw new IllegalArgumentException("Unsupported baseUrl scheme '" + scheme + "': must be https (or http for local testing)");
+    }
+
+    private static boolean isLoopbackHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        var lower = host.toLowerCase();
+        return "localhost".equals(lower) || "127.0.0.1".equals(lower) || "::1".equals(lower) || "[::1]".equals(lower);
     }
 
     URI buildUri(String baseUrl, String path, Map<String, Object> queryParams) {

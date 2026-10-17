@@ -21,7 +21,7 @@ class PluginRegistrationTest {
     void testPluginRegistration() {
         assertThat(pluginRegistry, notNullValue());
 
-        var plugins = pluginRegistry.getPlugins();
+        var plugins = pluginRegistry.plugins();
         assertThat(plugins, notNullValue());
 
         boolean hasListTask = plugins.stream()

@@ -14,6 +14,8 @@ import io.kestra.plugin.mercury.AbstractMercuryConnection;
 import io.kestra.plugin.mercury.model.Account;
 import io.kestra.plugin.mercury.model.AccountPage;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -76,6 +78,11 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
 
     private static final TypeReference<AccountPage> ACCOUNT_PAGE_TYPE_REF = new TypeReference<>() {};
 
+    public enum Order {
+        ASC,
+        DESC
+    }
+
     @Schema(
         title = "Fetch mode",
         description = "Controls how results are returned: FETCH to return all rows in memory, FETCH_ONE for the first row, STORE to stream records as ION into internal storage, or NONE to skip collecting outputs."
@@ -86,25 +93,28 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
 
     @Schema(
         title = "Results per page",
-        description = "Maximum number of accounts to return per page. Allowed range is 1 to 1000. Default is 1000."
+        description = "Maximum number of accounts to return per page. Minimum 1, maximum 1000. Default is 1000."
     )
     @PluginProperty(group = "main")
+    @Min(1)
+    @Max(1000)
     @Builder.Default
     private Property<Integer> limit = Property.ofValue(1000);
 
     @Schema(
         title = "Sort order",
-        description = "Sort order for accounts. Allowed values: 'asc' or 'desc'. Default is 'asc'."
+        description = "Sort order for accounts. Allowed values: ASC or DESC. Default is ASC."
     )
     @PluginProperty(group = "main")
     @Builder.Default
-    private Property<String> order = Property.ofValue("asc");
+    private Property<Order> order = Property.ofValue(Order.ASC);
 
     @Schema(
         title = "Maximum pages to retrieve",
-        description = "Safety cap on the number of pages fetched during pagination. Default is 100."
+        description = "Safety cap on the number of pages fetched during pagination. Minimum 1. Default is 100."
     )
     @PluginProperty(group = "execution")
+    @Min(1)
     @Builder.Default
     private Property<Integer> pageCap = Property.ofValue(DEFAULT_MAX_PAGE_CAP);
 
@@ -112,15 +122,22 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
     public Output run(RunContext runContext) throws Exception {
         var rFetchType = runContext.render(this.fetchType).as(FetchType.class).orElse(FetchType.FETCH);
         var rLimit = runContext.render(this.limit).as(Integer.class).orElse(1000);
-        var clampedLimit = Math.max(1, Math.min(rLimit, 1000));
-        var rOrder = runContext.render(this.order).as(String.class).orElse("asc");
+        if (rLimit < 1 || rLimit > 1000) {
+            throw new IllegalArgumentException("limit must be between 1 and 1000, got: " + rLimit);
+        }
+
         var rPageCap = runContext.render(this.pageCap).as(Integer.class).orElse(DEFAULT_MAX_PAGE_CAP);
+        if (rPageCap < 1) {
+            throw new IllegalArgumentException("pageCap must be at least 1, got: " + rPageCap);
+        }
+
+        var rOrder = runContext.render(this.order).as(Order.class).orElse(Order.ASC);
 
         try (var client = createClient(runContext)) {
             PageFetcher<Account> fetcher = cursor -> {
                 Map<String, Object> queryParams = new HashMap<>();
-                queryParams.put("limit", clampedLimit);
-                queryParams.put("order", rOrder);
+                queryParams.put("limit", rLimit);
+                queryParams.put("order", rOrder.name().toLowerCase());
                 if (cursor != null && !cursor.isBlank()) {
                     queryParams.put("start_after", cursor);
                 }
@@ -180,7 +197,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                         .build();
                 }
                 case NONE -> {
-                    var count = paginate(runContext, rPageCap, fetcher, account -> true);
+                    paginate(runContext, rPageCap, fetcher, account -> true);
                     yield Output.builder()
                         .size(0)
                         .build();
@@ -193,25 +210,25 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
     @Getter
     public static class Output implements io.kestra.core.models.tasks.Output {
         @Schema(
-            title = "The total number of accounts returned.",
+            title = "The total number of accounts returned",
             description = "For FETCH this matches the size of rows, for FETCH_ONE 0 or 1, for STORE the count of stored records, and 0 for NONE."
         )
         private final Integer size;
 
         @Schema(
-            title = "The accounts fetched.",
+            title = "The accounts fetched",
             description = "List of retrieved accounts. Only populated when fetchType is FETCH."
         )
         private final java.util.List<Account> rows;
 
         @Schema(
-            title = "The first account fetched.",
+            title = "The first account fetched",
             description = "The first account retrieved. Only populated when fetchType is FETCH_ONE."
         )
         private final Account row;
 
         @Schema(
-            title = "URI of stored results.",
+            title = "URI of stored results",
             description = "The URI of the file containing ION-formatted records in internal storage. Only populated when fetchType is STORE."
         )
         private final URI uri;

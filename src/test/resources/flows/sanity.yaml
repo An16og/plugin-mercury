@@ -1,8 +1,0 @@
-id: sanity
-namespace: io.kestra.tests
-
-tasks:
-  - id: list-accounts
-    type: io.kestra.plugin.mercury.accounts.List
-    apiToken: "{{ secret('MERCURY_API_TOKEN') }}"
-    fetchType: FETCH

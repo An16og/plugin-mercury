@@ -8,6 +8,11 @@ import io.kestra.core.models.tasks.common.FetchType;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.FileSerde;
+import io.kestra.core.models.annotations.Example;
+import io.kestra.core.models.annotations.Plugin;
+import io.kestra.core.models.flows.Flow;
+import io.kestra.core.models.validations.ModelValidator;
+import io.kestra.core.serializers.YamlParser;
 import io.kestra.plugin.mercury.model.Account;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
@@ -33,6 +38,9 @@ class ListTest {
 
     @Inject
     private RunContextFactory runContextFactory;
+
+    @Inject
+    private ModelValidator modelValidator;
 
     private WireMockServer wireMockServer;
 
@@ -503,6 +511,7 @@ class ListTest {
             assertThat(records, hasSize(1));
             Map<?, ?> record1 = (Map<?, ?>) records.get(0);
             assertThat(record1.get("id"), is("4b54e3d6-72aa-4c07-b3c6-9f4a56a64010"));
+            assertThat(record1.get("createdAt"), notNullValue());
         }
     }
 
@@ -681,5 +690,86 @@ class ListTest {
 
         assertThat(output.getSize(), is(1));
         assertThat(output.getRows().get(0).getId(), is("4b54e3d6-72aa-4c07-b3c6-9f4a56a64010"));
+    }
+
+    @Test
+    void testModelValidatorValidForDefaultAndConfiguredList() {
+        var defaultTask = io.kestra.plugin.mercury.accounts.List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(io.kestra.plugin.mercury.accounts.List.class.getName())
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .build();
+        assertThat(modelValidator.isValid(defaultTask).isEmpty(), is(true));
+
+        var configuredTask = io.kestra.plugin.mercury.accounts.List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(io.kestra.plugin.mercury.accounts.List.class.getName())
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .limit(Property.ofValue(500))
+            .pageCap(Property.ofValue(10))
+            .build();
+        assertThat(modelValidator.isValid(configuredTask).isEmpty(), is(true));
+    }
+
+    @Test
+    void testModelValidatorReportsInvalidConstantValues() {
+        var invalidLimitZero = io.kestra.plugin.mercury.accounts.List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(io.kestra.plugin.mercury.accounts.List.class.getName())
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .limit(Property.ofValue(0))
+            .build();
+        assertThat(modelValidator.isValid(invalidLimitZero).isPresent(), is(true));
+
+        var invalidLimitTooHigh = io.kestra.plugin.mercury.accounts.List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(io.kestra.plugin.mercury.accounts.List.class.getName())
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .limit(Property.ofValue(1001))
+            .build();
+        assertThat(modelValidator.isValid(invalidLimitTooHigh).isPresent(), is(true));
+
+        var invalidPageCapZero = io.kestra.plugin.mercury.accounts.List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(io.kestra.plugin.mercury.accounts.List.class.getName())
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .pageCap(Property.ofValue(0))
+            .build();
+        assertThat(modelValidator.isValid(invalidPageCapZero).isPresent(), is(true));
+    }
+
+    @Test
+    void testFlowYamlValidationContainingList() {
+        String flowYaml = """
+            id: flow_validating_list
+            namespace: io.kestra.tests
+            tasks:
+              - id: list_accounts
+                type: io.kestra.plugin.mercury.accounts.List
+                apiToken: "secret-token:valid-token"
+                limit: 250
+                pageCap: 10
+            """;
+        Flow flow = YamlParser.parse(flowYaml, Flow.class);
+        assertThat(modelValidator.isValid(flow).isEmpty(), is(true));
+    }
+
+    @Test
+    void testPluginExamplesFlowValidation() {
+        var listPlugin = io.kestra.plugin.mercury.accounts.List.class.getAnnotation(Plugin.class);
+        assertThat(listPlugin, notNullValue());
+        for (Example example : listPlugin.examples()) {
+            String code = String.join("\n", example.code());
+            Flow flow = YamlParser.parse(code, Flow.class);
+            assertThat(modelValidator.isValid(flow).isEmpty(), is(true));
+        }
+
+        var getPlugin = Get.class.getAnnotation(Plugin.class);
+        assertThat(getPlugin, notNullValue());
+        for (Example example : getPlugin.examples()) {
+            String code = String.join("\n", example.code());
+            Flow flow = YamlParser.parse(code, Flow.class);
+            assertThat(modelValidator.isValid(flow).isEmpty(), is(true));
+        }
     }
 }

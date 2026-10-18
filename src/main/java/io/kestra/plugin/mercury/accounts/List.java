@@ -24,7 +24,6 @@ import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
 import java.io.BufferedOutputStream;
-import java.io.File;
 import java.io.FileOutputStream;
 import java.net.URI;
 import java.util.ArrayList;
@@ -40,7 +39,8 @@ import java.util.concurrent.atomic.AtomicReference;
 @NoArgsConstructor
 @Schema(
     title = "List Mercury accounts",
-    description = "Retrieve all Mercury bank accounts with automatic cursor-based pagination."
+    description = """
+        Retrieve all Mercury bank accounts with automatic cursor-based pagination."""
 )
 @Plugin(
     examples = {
@@ -85,7 +85,8 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
 
     @Schema(
         title = "Fetch mode",
-        description = "Controls how results are returned: FETCH to return all rows in memory, FETCH_ONE for the first row, STORE to stream records as ION into internal storage, or NONE to skip collecting outputs."
+        description = """
+            Controls how results are returned: FETCH to return all rows in memory, FETCH_ONE for the first row, STORE to stream records as ION into internal storage, or NONE to skip collecting outputs."""
     )
     @PluginProperty(group = "execution")
     @Builder.Default
@@ -93,17 +94,17 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
 
     @Schema(
         title = "Results per page",
-        description = "Maximum number of accounts to return per page. Minimum 1, maximum 1000. Default is 1000."
+        description = """
+            Maximum number of accounts to return per page. Minimum 1, maximum 1000. Default is 1000."""
     )
     @PluginProperty(group = "main")
-    @Min(1)
-    @Max(1000)
     @Builder.Default
-    private Property<Integer> limit = Property.ofValue(1000);
+    private Property<@Min(1) @Max(1000) Integer> limit = Property.ofValue(1000);
 
     @Schema(
         title = "Sort order",
-        description = "Sort order for accounts. Allowed values: ASC or DESC. Default is ASC."
+        description = """
+            Sort order for accounts. Allowed values: ASC or DESC. Default is ASC."""
     )
     @PluginProperty(group = "main")
     @Builder.Default
@@ -111,12 +112,12 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
 
     @Schema(
         title = "Maximum pages to retrieve",
-        description = "Safety cap on the number of pages fetched during pagination. Minimum 1. Default is 100."
+        description = """
+            Safety cap on the number of pages fetched during pagination. Minimum 1. Default is 100."""
     )
     @PluginProperty(group = "execution")
-    @Min(1)
     @Builder.Default
-    private Property<Integer> pageCap = Property.ofValue(DEFAULT_MAX_PAGE_CAP);
+    private Property<@Min(1) Integer> pageCap = Property.ofValue(DEFAULT_MAX_PAGE_CAP);
 
     @Override
     public Output run(RunContext runContext) throws Exception {
@@ -142,7 +143,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                     queryParams.put("start_after", cursor);
                 }
 
-                AccountPage page = request(client, runContext, "/accounts", queryParams, ACCOUNT_PAGE_TYPE_REF);
+                var page = request(client, runContext, "/accounts", queryParams, ACCOUNT_PAGE_TYPE_REF);
                 if (page == null) {
                     return new PageResult<>(java.util.List.of(), null);
                 }
@@ -177,7 +178,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                         .build();
                 }
                 case STORE -> {
-                    File tempFile = runContext.workingDir().createTempFile(".ion").toFile();
+                    var tempFile = runContext.workingDir().createTempFile(".ion").toFile();
                     var storedCount = new AtomicInteger(0);
                     try (var output = new BufferedOutputStream(new FileOutputStream(tempFile), FileSerde.BUFFER_SIZE)) {
                         paginate(runContext, rPageCap, fetcher, account -> {
@@ -190,7 +191,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                             }
                         });
                     }
-                    URI uri = runContext.storage().putFile(tempFile);
+                    var uri = runContext.storage().putFile(tempFile);
                     yield Output.builder()
                         .size(storedCount.get())
                         .uri(uri)
@@ -211,25 +212,29 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
     public static class Output implements io.kestra.core.models.tasks.Output {
         @Schema(
             title = "The total number of accounts returned",
-            description = "For FETCH this matches the size of rows, for FETCH_ONE 0 or 1, for STORE the count of stored records, and 0 for NONE."
+            description = """
+                For FETCH this matches the size of rows, for FETCH_ONE 0 or 1, for STORE the count of stored records, and 0 for NONE."""
         )
         private final Integer size;
 
         @Schema(
             title = "The accounts fetched",
-            description = "List of retrieved accounts. Only populated when fetchType is FETCH."
+            description = """
+                List of retrieved accounts. Only populated when fetchType is FETCH."""
         )
         private final java.util.List<Account> rows;
 
         @Schema(
             title = "The first account fetched",
-            description = "The first account retrieved. Only populated when fetchType is FETCH_ONE."
+            description = """
+                The first account retrieved. Only populated when fetchType is FETCH_ONE."""
         )
         private final Account row;
 
         @Schema(
             title = "URI of stored results",
-            description = "The URI of the file containing ION-formatted records in internal storage. Only populated when fetchType is STORE."
+            description = """
+                The URI of the file containing ION-formatted records in internal storage. Only populated when fetchType is STORE."""
         )
         private final URI uri;
     }

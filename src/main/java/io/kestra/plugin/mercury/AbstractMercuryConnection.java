@@ -6,7 +6,7 @@ import io.kestra.core.http.HttpResponse;
 import io.kestra.core.http.client.HttpClient;
 import io.kestra.core.http.client.HttpClientException;
 import io.kestra.core.http.client.HttpClientResponseException;
-import io.kestra.core.http.client.configurations.BearerAuthConfiguration;
+import io.kestra.core.http.client.configurations.AbstractAuthConfiguration;
 import io.kestra.core.http.client.configurations.HttpConfiguration;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
@@ -21,6 +21,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
+import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
+import org.apache.hc.core5.http.message.BasicHeader;
 
 import java.io.IOException;
 import java.net.URI;
@@ -34,7 +36,6 @@ import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Predicate;
 
 @SuperBuilder
@@ -52,7 +53,8 @@ public abstract class AbstractMercuryConnection extends Task {
 
     @Schema(
         title = "Mercury API base URL",
-        description = "Base URL for the Mercury API. Override for the Mercury sandbox (https://api-sandbox.mercury.com/api/v1). Must use HTTPS, except for loopback hosts (localhost, 127.0.0.1, ::1) during local testing."
+        description = """
+            Base URL for the Mercury API. Override for the Mercury sandbox (https://api-sandbox.mercury.com/api/v1). Must use HTTPS, except for loopback hosts (localhost, 127.0.0.1, ::1) during local testing."""
     )
     @PluginProperty(group = "connection")
     @Builder.Default
@@ -60,7 +62,8 @@ public abstract class AbstractMercuryConnection extends Task {
 
     @Schema(
         title = "Mercury API token",
-        description = "API token for authentication with the Mercury API."
+        description = """
+            API token for authentication with the Mercury API."""
     )
     @PluginProperty(group = "connection", secret = true)
     @ToString.Exclude
@@ -81,26 +84,25 @@ public abstract class AbstractMercuryConnection extends Task {
         var rToken = runContext.render(this.apiToken).as(String.class)
             .orElseThrow(() -> new IllegalArgumentException("apiToken is required"));
 
-        var auth = new io.kestra.core.http.client.configurations.AbstractAuthConfiguration() {
+        var auth = new AbstractAuthConfiguration() {
             @Override
             public AuthType getType() {
                 return AuthType.BEARER;
             }
 
             @Override
-            public void configure(org.apache.hc.client5.http.impl.classic.HttpClientBuilder builder, RunContext ctx) {
+            public void configure(HttpClientBuilder builder, RunContext ctx) {
                 builder.addRequestInterceptorFirst((request, entity, context) ->
-                    request.setHeader(new org.apache.hc.core5.http.message.BasicHeader("Authorization", "Bearer " + rToken))
+                    request.setHeader(new BasicHeader("Authorization", "Bearer " + rToken))
                 );
-                try {
-                    builder.getClass().getMethod("disableAutomaticRetries").invoke(builder);
-                } catch (Exception ignored) {
-                }
+                builder.disableAutomaticRetries();
+                builder.disableRedirectHandling();
             }
         };
 
         var httpConfiguration = HttpConfiguration.builder()
             .auth(auth)
+            .followRedirects(Property.ofValue(false))
             .build();
 
         return new HttpClient(runContext, httpConfiguration);
@@ -126,7 +128,7 @@ public abstract class AbstractMercuryConnection extends Task {
         String currentCursor = null;
         var pageCount = 0;
         var totalItems = 0;
-        Set<String> seenCursors = new HashSet<>();
+        var seenCursors = new HashSet<String>();
 
         while (pageCount < pageCap) {
             pageCount++;
@@ -179,9 +181,9 @@ public abstract class AbstractMercuryConnection extends Task {
 
         for (var attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
             try {
-                HttpResponse<String> response = client.request(request, String.class);
-                int statusCode = response.getStatus() != null ? response.getStatus().getCode() : 200;
-                if (statusCode >= 400) {
+                var response = client.request(request, String.class);
+                var statusCode = response.getStatus() != null ? response.getStatus().getCode() : 200;
+                if (statusCode >= 300) {
                     throw mapError(statusCode, new HttpClientResponseException("HTTP " + statusCode, response));
                 }
                 return parseBody(response.getBody(), typeRef);
@@ -191,7 +193,8 @@ public abstract class AbstractMercuryConnection extends Task {
                     var waitMs = extractRetryAfterMs(runContext, e, backoffMs);
                     if (waitMs > MAX_BACKOFF_MS) {
                         logger.warn("Retry-After wait of {}ms exceeds max backoff cap of {}ms; failing request", waitMs, MAX_BACKOFF_MS);
-                        throw mapError(429, e);
+                        throw new IllegalStateException(
+                            "Rate limited (429): Mercury asked to wait " + waitMs + " ms (Retry-After), above the " + MAX_BACKOFF_MS + " ms cap. Try again later.", e);
                     }
                     logger.warn("Rate limited (429), retry {}/{} after {}ms", attempt, MAX_RETRY_ATTEMPTS, waitMs);
                     try {
@@ -208,7 +211,8 @@ public abstract class AbstractMercuryConnection extends Task {
                 throw mapError(0, e);
             }
         }
-        throw new IllegalStateException("Exhausted all " + MAX_RETRY_ATTEMPTS + " retry attempts after repeated 429 responses");
+        throw new IllegalStateException(
+            "Rate limited (429): Too many requests to Mercury API. All retry attempts exhausted. Try again later.");
     }
 
     private <T> T parseBody(String body, TypeReference<T> typeRef) throws IOException {
@@ -238,12 +242,12 @@ public abstract class AbstractMercuryConnection extends Task {
 
     private long parseRetryAfterHeader(RunContext runContext, String raw, long defaultBackoffMs) {
         try {
-            long seconds = Long.parseLong(raw);
+            var seconds = Long.parseLong(raw);
             return Math.max(0L, seconds * 1_000L);
         } catch (NumberFormatException nfe) {
             try {
-                ZonedDateTime date = ZonedDateTime.parse(raw, DateTimeFormatter.RFC_1123_DATE_TIME);
-                long waitMs = Duration.between(Instant.now(), date.toInstant()).toMillis();
+                var date = ZonedDateTime.parse(raw, DateTimeFormatter.RFC_1123_DATE_TIME);
+                var waitMs = Duration.between(Instant.now(), date.toInstant()).toMillis();
                 return Math.max(0L, waitMs);
             } catch (DateTimeParseException dtpe) {
                 runContext.logger().warn("Unparseable Retry-After header '{}', falling back to bounded exponential backoff", raw);
@@ -253,6 +257,10 @@ public abstract class AbstractMercuryConnection extends Task {
     }
 
     private Exception mapError(int statusCode, HttpClientException e) {
+        if (statusCode >= 300 && statusCode <= 399) {
+            return new IllegalStateException(
+                "Unexpected redirect (" + statusCode + "): HTTP redirects are disabled to prevent credential leakage.", e);
+        }
         return switch (statusCode) {
             case 401 -> new IllegalStateException(
                 "Authentication failed (401): Invalid or expired Mercury API token. " +

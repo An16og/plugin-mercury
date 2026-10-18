@@ -246,9 +246,80 @@ class ConnectionErrorAndSecurityTest {
         RunContext runContext = runContextFactory.of();
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> task.run(runContext));
 
-        assertThat(ex.getMessage(), containsString("Rate limited (429)"));
-        assertThat(ex.getMessage(), containsString("Too many requests to Mercury API"));
+        assertThat(ex.getMessage(), containsString("Rate limited (429): Mercury asked to wait 60000 ms (Retry-After), above the 30000 ms cap. Try again later."));
         wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/accounts")));
+    }
+
+    @Test
+    void test429WithRetryAfterZeroExactRequestCount() throws Exception {
+        String successJson = """
+            {
+              "accounts": [],
+              "page": { "nextPage": null, "previousPage": null }
+            }
+            """;
+
+        wireMockServer.stubFor(get(urlPathEqualTo("/accounts"))
+            .inScenario("ExactRetryCountScenario")
+            .whenScenarioStateIs(STARTED)
+            .willReturn(aResponse()
+                .withStatus(429)
+                .withHeader("Retry-After", "0")
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"error\": \"Rate limited\"}"))
+            .willSetStateTo("SuccessState"));
+
+        wireMockServer.stubFor(get(urlPathEqualTo("/accounts"))
+            .inScenario("ExactRetryCountScenario")
+            .whenScenarioStateIs("SuccessState")
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody(successJson)));
+
+        var task = List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(List.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .build();
+
+        RunContext runContext = runContextFactory.of();
+        List.Output output = task.run(runContext);
+
+        assertThat(output.getSize(), is(0));
+        wireMockServer.verify(2, getRequestedFor(urlPathEqualTo("/accounts")));
+    }
+
+    @Test
+    void testRedirectBlockedWithClearMessageAndTargetReceivesNoRequest() {
+        var targetServer = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
+        targetServer.start();
+        try {
+            targetServer.stubFor(get(anyUrl()).willReturn(aResponse().withStatus(200)));
+
+            wireMockServer.stubFor(get(urlPathEqualTo("/accounts"))
+                .willReturn(aResponse()
+                    .withStatus(302)
+                    .withHeader("Location", targetServer.baseUrl() + "/accounts")));
+
+            var task = List.builder()
+                .id(UUID.randomUUID().toString())
+                .type(List.class.getName())
+                .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+                .apiToken(Property.ofValue("secret-token:valid-token"))
+                .build();
+
+            RunContext runContext = runContextFactory.of();
+            IllegalStateException ex = assertThrows(IllegalStateException.class, () -> task.run(runContext));
+
+            assertThat(ex.getMessage(), containsString("Unexpected redirect (302)"));
+            assertThat(ex.getMessage(), containsString("HTTP redirects are disabled to prevent credential leakage"));
+
+            targetServer.verify(0, getRequestedFor(anyUrl()));
+        } finally {
+            targetServer.stop();
+        }
     }
 
     @Test

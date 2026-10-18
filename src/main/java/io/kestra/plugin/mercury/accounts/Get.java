@@ -28,7 +28,8 @@ import java.util.UUID;
 @NoArgsConstructor
 @Schema(
     title = "Get a Mercury account",
-    description = "Retrieve details for a single Mercury bank account by its ID."
+    description = """
+        Retrieve details for a single Mercury bank account by its ID."""
 )
 @Plugin(
     examples = {
@@ -54,7 +55,8 @@ public class Get extends AbstractMercuryConnection implements RunnableTask<Get.O
 
     @Schema(
         title = "Account ID",
-        description = "The unique identifier (UUID) of the Mercury account to retrieve."
+        description = """
+            The unique identifier (UUID) of the Mercury account to retrieve."""
     )
     @PluginProperty(group = "main")
     @NotNull
@@ -72,9 +74,9 @@ public class Get extends AbstractMercuryConnection implements RunnableTask<Get.O
         }
 
         try (var client = createClient(runContext)) {
-            Account account = request(client, runContext, "/account/" + rAccountId.trim(), Map.of(), ACCOUNT_TYPE_REF);
+            var account = request(client, runContext, "/account/" + rAccountId.trim(), Map.of(), ACCOUNT_TYPE_REF);
             if (account == null) {
-                throw new IllegalStateException("Not found (404): The requested Mercury resource does not exist or is not visible to this token.");
+                throw new IllegalStateException("Empty response from the Mercury API for account '" + rAccountId.trim() + "'");
             }
 
             return Output.builder()
@@ -88,7 +90,8 @@ public class Get extends AbstractMercuryConnection implements RunnableTask<Get.O
     public static class Output implements io.kestra.core.models.tasks.Output {
         @Schema(
             title = "Account details",
-            description = "The retrieved Mercury bank account."
+            description = """
+                The retrieved Mercury bank account."""
         )
         private final Account account;
     }

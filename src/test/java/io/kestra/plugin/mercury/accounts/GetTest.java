@@ -6,12 +6,15 @@ import io.kestra.core.junit.annotations.KestraTest;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.runners.RunContextFactory;
+import io.kestra.core.serializers.JacksonMapper;
+import io.kestra.plugin.mercury.model.Account;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
@@ -93,7 +96,7 @@ class GetTest {
         assertThat(output.getAccount().getAvailableBalance(), is(new BigDecimal("12450.25")));
         assertThat(output.getAccount().getCanReceiveTransactions(), is(true));
         assertThat(output.getAccount().getCanSendRealTimePayments(), is(true));
-        assertThat(output.getAccount().getCreatedAt(), is("2024-01-15T08:30:00Z"));
+        assertThat(output.getAccount().getCreatedAt(), is(Instant.parse("2024-01-15T08:30:00Z")));
         assertThat(output.getAccount().getDashboardLink(), is("https://app.mercury.com/account/" + validUuid));
     }
 
@@ -119,6 +122,41 @@ class GetTest {
 
         assertThat(exception.getMessage(), containsString("Not found (404)"));
         assertThat(exception.getMessage(), containsString("The requested Mercury resource does not exist or is not visible to this token"));
+    }
+
+    @Test
+    void testGetAccountEmptyResponseBodyFails() {
+        String validUuid = "6d76f5e8-94cc-4e29-d5e8-1b6c78c86232";
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + validUuid))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("")));
+
+        var task = Get.builder()
+            .id(UUID.randomUUID().toString())
+            .type(Get.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(validUuid))
+            .build();
+
+        RunContext runContext = runContextFactory.of();
+        IllegalStateException exception = assertThrows(IllegalStateException.class, () -> task.run(runContext));
+
+        assertThat(exception.getMessage(), is("Empty response from the Mercury API for account '" + validUuid + "'"));
+    }
+
+    @Test
+    void testAccountIso8601MillisParsing() throws Exception {
+        String json = """
+            {
+              "id": "4b54e3d6-72aa-4c07-b3c6-9f4a56a64010",
+              "createdAt": "2024-01-15T10:00:00.000Z"
+            }
+            """;
+        Account account = JacksonMapper.ofJson().readValue(json, Account.class);
+        assertThat(account.getCreatedAt(), is(Instant.parse("2024-01-15T10:00:00.000Z")));
     }
 
     @Test

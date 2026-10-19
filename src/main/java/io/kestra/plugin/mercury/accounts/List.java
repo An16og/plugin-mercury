@@ -136,7 +136,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
 
         try (var client = createClient(runContext)) {
             PageFetcher<Account> fetcher = cursor -> {
-                Map<String, Object> queryParams = new HashMap<>();
+                var queryParams = new HashMap<String, Object>();
                 queryParams.put("limit", rLimit);
                 queryParams.put("order", rOrder.name().toLowerCase());
                 if (cursor != null && !cursor.isBlank()) {

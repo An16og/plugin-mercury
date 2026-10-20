@@ -1,16 +1,34 @@
-This is the Kestra plugin template. Use it as a starting point for building a new plugin.
+# How to use the Mercury plugin
 
-## What this template ships
+Connect to Mercury, the digital business bank, to manage and inspect bank accounts within Kestra workflows using the [Mercury API](https://docs.mercury.com).
 
-- `Example` is a sample `RunnableTask` that reverses an input string.
-- `Trigger` is a sample polling trigger that fires an execution at random.
+## Authentication
 
-## How to build your plugin
+Mercury uses Bearer token authentication. Your `apiToken` is sensitive and should be stored securely as a [secret](https://kestra.io/docs/concepts/secret).
 
-1. Rename the package `io.kestra.plugin.mercury` to your own, for example `io.kestra.plugin.myservice`.
-2. Update `group`, `name`, `title`, and `description` in `src/main/resources/metadata/index.yaml`.
-3. Replace `src/main/resources/icons/plugin-icon.svg` with your service's icon.
-4. Replace the `Example` and `Trigger` classes with your real tasks and triggers.
-5. Replace this how-to with documentation for your plugin.
+The `baseUrl` parameter is optional and defaults to `https://api.mercury.com/api/v1`. For sandbox testing, set `baseUrl` to `https://api-sandbox.mercury.com/api/v1` either on the task or globally via [plugin defaults](https://kestra.io/docs/workflow-components/plugin-defaults).
 
-Run `./gradlew lintPluginDocs` before pushing to validate the plugin documentation.
+## Tasks
+
+### `io.kestra.plugin.mercury.accounts.List`
+
+List all Mercury bank accounts with automatic cursor-based pagination.
+
+- **Required fields:**
+  - `apiToken`
+- **Optional fields:**
+  - `baseUrl` (default: `https://api.mercury.com/api/v1`)
+  - `fetchType` (default: `FETCH`; options: `FETCH`, `FETCH_ONE`, `STORE`, `NONE`)
+  - `limit` (default: `1000`, min: `1`, max: `1000`)
+  - `order` (default: `ASC`; options: `ASC`, `DESC`)
+  - `pageCap` (default: `100`, min: `1`)
+
+### `io.kestra.plugin.mercury.accounts.Get`
+
+Retrieve full details of a single Mercury bank account by its unique identifier.
+
+- **Required fields:**
+  - `apiToken`
+  - `accountId` (UUID)
+- **Optional fields:**
+  - `baseUrl` (default: `https://api.mercury.com/api/v1`)

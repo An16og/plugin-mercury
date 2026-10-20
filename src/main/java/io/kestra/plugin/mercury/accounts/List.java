@@ -97,7 +97,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
         description = """
             Maximum number of accounts to return per page. Minimum 1, maximum 1000. Default is 1000."""
     )
-    @PluginProperty(group = "main")
+    @PluginProperty(group = "processing")
     @Builder.Default
     private Property<@Min(1) @Max(1000) Integer> limit = Property.ofValue(1000);
 
@@ -106,7 +106,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
         description = """
             Sort order for accounts. Allowed values: ASC or DESC. Default is ASC."""
     )
-    @PluginProperty(group = "main")
+    @PluginProperty(group = "processing")
     @Builder.Default
     private Property<Order> order = Property.ofValue(Order.ASC);
 
@@ -115,7 +115,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
         description = """
             Safety cap on the number of pages fetched during pagination. Minimum 1. Default is 100."""
     )
-    @PluginProperty(group = "execution")
+    @PluginProperty(group = "reliability")
     @Builder.Default
     private Property<@Min(1) Integer> pageCap = Property.ofValue(DEFAULT_MAX_PAGE_CAP);
 

@@ -19,7 +19,6 @@ import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
 import java.util.Map;
-import java.util.UUID;
 
 @SuperBuilder
 @ToString
@@ -66,17 +65,12 @@ public class Get extends AbstractMercuryConnection implements RunnableTask<Get.O
     public Output run(RunContext runContext) throws Exception {
         var rAccountId = runContext.render(this.accountId).as(String.class)
             .orElseThrow(() -> new IllegalArgumentException("accountId is required"));
-
-        try {
-            UUID.fromString(rAccountId.trim());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid accountId '" + rAccountId + "': must be a valid UUID", e);
-        }
+        var accountId = requireUuid(rAccountId, "accountId");
 
         try (var client = createClient(runContext)) {
-            var account = request(client, runContext, "/account/" + rAccountId.trim(), Map.of(), ACCOUNT_TYPE_REF);
+            var account = request(client, runContext, "/account/" + accountId, Map.of(), ACCOUNT_TYPE_REF);
             if (account == null) {
-                throw new IllegalStateException("Empty response from the Mercury API for account '" + rAccountId.trim() + "'");
+                throw new IllegalStateException("Empty response from the Mercury API for account '" + accountId + "'");
             }
 
             return Output.builder()

@@ -1,6 +1,5 @@
 package io.kestra.plugin.mercury.transactions;
 
-import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
@@ -28,14 +27,13 @@ import lombok.experimental.SuperBuilder;
 import java.io.BufferedOutputStream;
 import java.io.FileOutputStream;
 import java.net.URI;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.UUID;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -89,13 +87,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
 
     public enum Order {
         ASC,
-        DESC;
-
-        @JsonValue
-        @Override
-        public String toString() {
-            return name().toLowerCase();
-        }
+        DESC
     }
 
     public enum Status {
@@ -104,13 +96,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
         CANCELLED,
         FAILED,
         REVERSED,
-        BLOCKED;
-
-        @JsonValue
-        @Override
-        public String toString() {
-            return name().toLowerCase();
-        }
+        BLOCKED
     }
 
     @Schema(
@@ -193,12 +179,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
     public Output run(RunContext runContext) throws Exception {
         var rAccountId = runContext.render(this.accountId).as(String.class)
             .orElseThrow(() -> new IllegalArgumentException("accountId is required"));
-
-        try {
-            UUID.fromString(rAccountId.trim());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid accountId '" + rAccountId + "': must be a valid UUID", e);
-        }
+        var accountId = requireUuid(rAccountId, "accountId");
 
         var rFetchType = runContext.render(this.fetchType).as(FetchType.class).orElse(FetchType.FETCH);
         var rLimit = runContext.render(this.limit).as(Integer.class).orElse(1000);
@@ -210,6 +191,9 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
         if (rPageCap < 1) {
             throw new IllegalArgumentException("pageCap must be at least 1, got: " + rPageCap);
         }
+
+        var effectiveLimit = rFetchType == FetchType.FETCH_ONE ? 1 : rLimit;
+        var effectivePageCap = rFetchType == FetchType.FETCH_ONE ? 1 : rPageCap;
 
         var rOrder = runContext.render(this.order).as(Order.class).orElse(null);
         var rStatus = runContext.render(this.status).as(Status.class).orElse(null);
@@ -228,11 +212,11 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
         try (var client = createClient(runContext)) {
             OffsetPageFetcher<Transaction> fetcher = offset -> {
                 var queryParams = new HashMap<String, Object>();
-                queryParams.put("limit", rLimit);
+                queryParams.put("limit", effectiveLimit);
                 queryParams.put("offset", offset);
 
                 if (rOrder != null) {
-                    queryParams.put("order", rOrder.name().toLowerCase());
+                    queryParams.put("order", rOrder.name().toLowerCase(Locale.ROOT));
                 }
                 if (rStart != null && !rStart.isBlank()) {
                     queryParams.put("start", rStart.trim());
@@ -241,7 +225,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                     queryParams.put("end", rEnd.trim());
                 }
                 if (rStatus != null) {
-                    queryParams.put("status", rStatus.name().toLowerCase());
+                    queryParams.put("status", rStatus.name().toLowerCase(Locale.ROOT));
                 }
                 if (rSearch != null && !rSearch.isBlank()) {
                     queryParams.put("search", rSearch.trim());
@@ -250,7 +234,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                 var response = request(
                     client,
                     runContext,
-                    "/account/" + rAccountId.trim() + "/transactions",
+                    "/account/" + accountId + "/transactions",
                     queryParams,
                     TRANSACTIONS_RESPONSE_TYPE_REF
                 );
@@ -278,7 +262,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                 }
                 case FETCH_ONE -> {
                     var firstTx = new AtomicReference<Transaction>();
-                    paginateOffset(runContext, rPageCap, fetcher, tx -> {
+                    paginateOffset(runContext, effectivePageCap, fetcher, tx -> {
                         firstTx.set(tx);
                         return false;
                     });
@@ -322,11 +306,6 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
         var trimmed = value.trim();
         try {
             LocalDate.parse(trimmed, DateTimeFormatter.ISO_LOCAL_DATE);
-            return;
-        } catch (DateTimeParseException ignored) {
-        }
-        try {
-            Instant.parse(trimmed);
             return;
         } catch (DateTimeParseException ignored) {
         }

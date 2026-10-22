@@ -36,6 +36,7 @@ import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Predicate;
 
 @SuperBuilder
@@ -210,16 +211,10 @@ public abstract class AbstractMercuryConnection extends Task {
                 break;
             }
 
-            var previousOffset = offset;
             offset += items.size();
 
             if (offset >= page.total()) {
                 logger.debug("Pagination stopped: offset {} reached or exceeded total {} on page {}", offset, page.total(), pageCount);
-                break;
-            }
-
-            if (offset <= previousOffset) {
-                logger.warn("Pagination stopped: non-advancing page detected at offset {} on page {}", offset, pageCount);
                 break;
             }
 
@@ -231,6 +226,19 @@ public abstract class AbstractMercuryConnection extends Task {
         }
 
         return totalItems;
+    }
+
+    protected static String requireUuid(String value, String field) {
+        if (value == null) {
+            throw new IllegalArgumentException(field + " is required");
+        }
+        var trimmed = value.trim();
+        try {
+            UUID.fromString(trimmed);
+            return trimmed;
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid " + field + " '" + value + "': must be a valid UUID", e);
+        }
     }
 
     private <T> T executeWithRetry(HttpClient client, RunContext runContext,

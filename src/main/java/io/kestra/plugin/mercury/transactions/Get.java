@@ -19,7 +19,6 @@ import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
 import java.util.Map;
-import java.util.UUID;
 
 @SuperBuilder
 @ToString
@@ -76,27 +75,17 @@ public class Get extends AbstractMercuryConnection implements RunnableTask<Get.O
     public Output run(RunContext runContext) throws Exception {
         var rAccountId = runContext.render(this.accountId).as(String.class)
             .orElseThrow(() -> new IllegalArgumentException("accountId is required"));
-
-        try {
-            UUID.fromString(rAccountId.trim());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid accountId '" + rAccountId + "': must be a valid UUID", e);
-        }
+        var accountId = requireUuid(rAccountId, "accountId");
 
         var rTransactionId = runContext.render(this.transactionId).as(String.class)
             .orElseThrow(() -> new IllegalArgumentException("transactionId is required"));
-
-        try {
-            UUID.fromString(rTransactionId.trim());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid transactionId '" + rTransactionId + "': must be a valid UUID", e);
-        }
+        var transactionId = requireUuid(rTransactionId, "transactionId");
 
         try (var client = createClient(runContext)) {
-            var path = "/account/" + rAccountId.trim() + "/transaction/" + rTransactionId.trim();
+            var path = "/account/" + accountId + "/transaction/" + transactionId;
             var transaction = request(client, runContext, path, Map.of(), TRANSACTION_TYPE_REF);
             if (transaction == null) {
-                throw new IllegalStateException("Empty response from the Mercury API for transaction '" + rTransactionId.trim() + "'");
+                throw new IllegalStateException("Empty response from the Mercury API for transaction '" + transactionId + "'");
             }
 
             return Output.builder()

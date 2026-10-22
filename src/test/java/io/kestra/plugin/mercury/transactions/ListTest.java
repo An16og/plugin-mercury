@@ -322,7 +322,7 @@ class ListTest {
     }
 
     @Test
-    void testNonAdvancingPageGuard() throws Exception {
+    void testEmptyPageWithNonZeroTotalStops() throws Exception {
         var emptyPageWithNonZeroTotal = """
             {
               "total": 10,
@@ -474,6 +474,8 @@ class ListTest {
             """.formatted(ACCOUNT_ID);
 
         wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("limit", equalTo("1"))
+            .withQueryParam("offset", equalTo("0"))
             .willReturn(aResponse()
                 .withStatus(200)
                 .withHeader("Content-Type", "application/json")
@@ -496,6 +498,10 @@ class ListTest {
         assertThat(output.getRow().getId(), is("e0e567d8-76a7-11e9-a22d-0b33e9de0755"));
         assertThat(output.getRows(), nullValue());
         assertThat(output.getUri(), nullValue());
+
+        wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("limit", equalTo("1"))
+            .withQueryParam("offset", equalTo("0")));
     }
 
     @Test
@@ -716,21 +722,128 @@ class ListTest {
 
         var runContext = runContextFactory.of();
 
-        for (var status : List.Status.values()) {
+        var expectedWireCasing = Map.of(
+            List.Status.PENDING, "pending",
+            List.Status.SENT, "sent",
+            List.Status.CANCELLED, "cancelled",
+            List.Status.FAILED, "failed",
+            List.Status.REVERSED, "reversed",
+            List.Status.BLOCKED, "blocked"
+        );
+
+        for (var entry : expectedWireCasing.entrySet()) {
+            wireMockServer.resetRequests();
+
             var task = List.builder()
                 .id(UUID.randomUUID().toString())
                 .type(List.class.getName())
                 .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
                 .apiToken(Property.ofValue("secret-token:valid-token"))
                 .accountId(Property.ofValue(ACCOUNT_ID))
-                .status(Property.ofValue(status))
+                .status(Property.ofValue(entry.getKey()))
                 .build();
 
             task.run(runContext);
 
-            wireMockServer.verify(getRequestedFor(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
-                .withQueryParam("status", equalTo(status.name().toLowerCase())));
+            wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+                .withQueryParam("status", equalTo(entry.getValue())));
         }
+
+        wireMockServer.resetRequests();
+        var taskWithoutStatus = List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(List.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(ACCOUNT_ID))
+            .build();
+
+        taskWithoutStatus.run(runContext);
+
+        wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withoutQueryParam("status"));
+    }
+
+    @Test
+    void testFlowYamlWithUppercaseStatusAndOrder() throws Exception {
+        var responseJson = """
+            {
+              "total": 0,
+              "transactions": []
+            }
+            """;
+
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("status", equalTo("sent"))
+            .withQueryParam("order", equalTo("desc"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody(responseJson)));
+
+        var flowYaml = """
+            id: flow_validating_uppercase_enums
+            namespace: io.kestra.tests
+            tasks:
+              - id: list_transactions
+                type: io.kestra.plugin.mercury.transactions.List
+                baseUrl: "%s"
+                apiToken: "secret-token:valid-token"
+                accountId: "%s"
+                status: SENT
+                order: DESC
+            """.formatted(wireMockServer.baseUrl(), ACCOUNT_ID);
+
+        var flow = YamlParser.parse(flowYaml, Flow.class);
+        assertThat(modelValidator.isValid(flow).isEmpty(), is(true));
+
+        var task = (List) flow.getTasks().get(0);
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
+
+        assertThat(output.getSize(), is(0));
+        wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("status", equalTo("sent"))
+            .withQueryParam("order", equalTo("desc")));
+    }
+
+    @Test
+    void testIso8601TimestampWithZAccepted() throws Exception {
+        var responseJson = """
+            {
+              "total": 0,
+              "transactions": []
+            }
+            """;
+
+        var startTimestamp = "2024-01-15T10:00:00Z";
+        var endTimestamp = "2024-01-16T12:00:00Z";
+
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("start", equalTo(startTimestamp))
+            .withQueryParam("end", equalTo(endTimestamp))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody(responseJson)));
+
+        var task = List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(List.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(ACCOUNT_ID))
+            .start(Property.ofValue(startTimestamp))
+            .end(Property.ofValue(endTimestamp))
+            .build();
+
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
+
+        assertThat(output.getSize(), is(0));
+        wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("start", equalTo(startTimestamp))
+            .withQueryParam("end", equalTo(endTimestamp)));
     }
 
     @Test

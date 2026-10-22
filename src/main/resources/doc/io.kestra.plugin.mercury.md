@@ -32,3 +32,32 @@ Retrieve full details of a single Mercury bank account by its unique identifier.
   - `accountId` (UUID)
 - **Optional fields:**
   - `baseUrl` (default: `https://api.mercury.com/api/v1`)
+
+### `io.kestra.plugin.mercury.transactions.List`
+
+Retrieve transactions for a specific Mercury bank account with automatic offset-based pagination and filtering.
+
+- **Required fields:**
+  - `apiToken`
+  - `accountId` (UUID)
+- **Optional fields:**
+  - `baseUrl` (default: `https://api.mercury.com/api/v1`)
+  - `fetchType` (default: `FETCH`; options: `FETCH`, `FETCH_ONE`, `STORE`, `NONE`)
+  - `limit` (default: `1000`, min: `1`, max: `1000`)
+  - `order` (options: `ASC`, `DESC`; defaults to `DESC` in Mercury API)
+  - `pageCap` (default: `100`, min: `1`)
+  - `start` (date format: `YYYY-MM-DD` or ISO 8601 string; defaults to 30 days prior in Mercury API)
+  - `end` (date format: `YYYY-MM-DD` or ISO 8601 string; defaults to current date in Mercury API)
+  - `status` (options: `PENDING`, `SENT`, `CANCELLED`, `FAILED`, `REVERSED`, `BLOCKED`)
+  - `search`
+
+### `io.kestra.plugin.mercury.transactions.Get`
+
+Retrieve full details for a single Mercury bank transaction by its ID.
+
+- **Required fields:**
+  - `apiToken`
+  - `accountId` (UUID)
+  - `transactionId` (UUID)
+- **Optional fields:**
+  - `baseUrl` (default: `https://api.mercury.com/api/v1`)

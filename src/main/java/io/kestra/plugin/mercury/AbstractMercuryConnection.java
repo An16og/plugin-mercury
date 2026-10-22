@@ -77,6 +77,13 @@ public abstract class AbstractMercuryConnection extends Task {
         PageResult<T> fetch(String cursor) throws Exception;
     }
 
+    public record OffsetPageResult<T>(List<T> items, long total) {}
+
+    @FunctionalInterface
+    public interface OffsetPageFetcher<T> {
+        OffsetPageResult<T> fetch(int offset) throws Exception;
+    }
+
     protected HttpClient createClient(RunContext runContext) throws Exception {
         var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
         validateBaseUrl(rBaseUrl);
@@ -169,6 +176,58 @@ public abstract class AbstractMercuryConnection extends Task {
             }
 
             currentCursor = nextCursor;
+        }
+
+        return totalItems;
+    }
+
+    protected <T> int paginateOffset(RunContext runContext, int pageCap,
+                                     OffsetPageFetcher<T> fetcher, Predicate<T> itemConsumer) throws Exception {
+        var logger = runContext.logger();
+        var offset = 0;
+        var pageCount = 0;
+        var totalItems = 0;
+
+        while (pageCount < pageCap) {
+            pageCount++;
+            var page = fetcher.fetch(offset);
+            if (page == null || page.items() == null || page.items().isEmpty()) {
+                logger.debug("Pagination stopped: empty page encountered on page {}", pageCount);
+                break;
+            }
+
+            var items = page.items();
+            var stopRequested = false;
+            for (var item : items) {
+                totalItems++;
+                if (!itemConsumer.test(item)) {
+                    stopRequested = true;
+                    break;
+                }
+            }
+
+            if (stopRequested) {
+                break;
+            }
+
+            var previousOffset = offset;
+            offset += items.size();
+
+            if (offset >= page.total()) {
+                logger.debug("Pagination stopped: offset {} reached or exceeded total {} on page {}", offset, page.total(), pageCount);
+                break;
+            }
+
+            if (offset <= previousOffset) {
+                logger.warn("Pagination stopped: non-advancing page detected at offset {} on page {}", offset, pageCount);
+                break;
+            }
+
+            if (pageCount >= pageCap) {
+                throw new IllegalStateException(
+                    "Pagination reached the maximum pageCap of " + pageCap +
+                    " but more transactions remain. Increase 'pageCap' on the task to fetch more pages.");
+            }
         }
 
         return totalItems;

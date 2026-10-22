@@ -1,0 +1,8 @@
+group: io.kestra.plugin.mercury.transactions
+name: "transactions"
+title: "Transactions"
+description: "Tasks for querying Mercury bank transactions."
+body: "Query and inspect Mercury business bank account transactions, status, amounts, and counterparties within Kestra workflows."
+videos: []
+createdBy: "Kestra Core Team"
+managedBy: "Kestra Core Team"

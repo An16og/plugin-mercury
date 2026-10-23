@@ -1,0 +1,8 @@
+group: io.kestra.plugin.mercury.recipients
+name: "recipients"
+title: "Recipients"
+description: "Tasks for querying Mercury payment recipients."
+body: "Query and inspect Mercury business bank payment recipients, routing information, and payment attachments within Kestra workflows."
+videos: []
+createdBy: "Kestra Core Team"
+managedBy: "Kestra Core Team"

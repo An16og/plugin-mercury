@@ -130,7 +130,7 @@ public abstract class AbstractMercuryConnection extends Task {
         return executeWithRetry(client, runContext, request, typeRef);
     }
 
-    protected <T> int paginate(RunContext runContext, int pageCap,
+    protected <T> int paginate(RunContext runContext, int pageCap, String entityName,
                                PageFetcher<T> fetcher, Predicate<T> itemConsumer) throws Exception {
         var logger = runContext.logger();
         String currentCursor = null;
@@ -173,13 +173,18 @@ public abstract class AbstractMercuryConnection extends Task {
             if (pageCount >= pageCap) {
                 throw new IllegalStateException(
                     "Pagination reached the maximum pageCap of " + pageCap +
-                    " but more accounts remain. Increase 'pageCap' on the task to fetch more pages.");
+                    " but more " + entityName + " remain. Increase 'pageCap' on the task to fetch more pages.");
             }
 
             currentCursor = nextCursor;
         }
 
         return totalItems;
+    }
+
+    protected <T> int paginate(RunContext runContext, int pageCap,
+                               PageFetcher<T> fetcher, Predicate<T> itemConsumer) throws Exception {
+        return paginate(runContext, pageCap, "accounts", fetcher, itemConsumer);
     }
 
     protected <T> int paginateOffset(RunContext runContext, int pageCap,

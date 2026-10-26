@@ -8,8 +8,6 @@ import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.models.tasks.common.FetchType;
 import io.kestra.core.runners.RunContext;
-import io.kestra.core.serializers.FileSerde;
-import io.kestra.core.serializers.JacksonMapper;
 import io.kestra.plugin.mercury.AbstractMercuryConnection;
 import io.kestra.plugin.mercury.model.Recipient;
 import io.kestra.plugin.mercury.model.RecipientsResponse;
@@ -23,14 +21,9 @@ import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
-import java.io.BufferedOutputStream;
-import java.io.FileOutputStream;
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 @SuperBuilder
 @ToString
@@ -125,12 +118,12 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
         var rFetchType = runContext.render(this.fetchType).as(FetchType.class).orElse(FetchType.FETCH);
         var rLimit = runContext.render(this.limit).as(Integer.class).orElse(1000);
         if (rLimit < 1 || rLimit > 1000) {
-            throw new IllegalArgumentException("limit must be between 1 and 1000, got: " + rLimit);
+            throw new IllegalArgumentException("limit must be between 1 and 1000, got: %d".formatted(rLimit));
         }
 
         var rPageCap = runContext.render(this.pageCap).as(Integer.class).orElse(DEFAULT_MAX_PAGE_CAP);
         if (rPageCap < 1) {
-            throw new IllegalArgumentException("pageCap must be at least 1, got: " + rPageCap);
+            throw new IllegalArgumentException("pageCap must be at least 1, got: %d".formatted(rPageCap));
         }
 
         var effectiveLimit = rFetchType == FetchType.FETCH_ONE ? 1 : rLimit;
@@ -156,57 +149,19 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                 return new PageResult<>(items, nextCursor);
             };
 
-            return switch (rFetchType) {
-                case FETCH -> {
-                    var rows = new ArrayList<Recipient>();
-                    paginate(runContext, effectivePageCap, "recipients", fetcher, recipient -> {
-                        rows.add(recipient);
-                        return true;
-                    });
-                    yield Output.builder()
-                        .size(rows.size())
-                        .rows(rows)
-                        .build();
-                }
-                case FETCH_ONE -> {
-                    var firstRecipient = new AtomicReference<Recipient>();
-                    paginate(runContext, effectivePageCap, "recipients", fetcher, recipient -> {
-                        firstRecipient.set(recipient);
-                        return false;
-                    });
-                    var found = firstRecipient.get();
-                    yield Output.builder()
-                        .size(found != null ? 1 : 0)
-                        .row(found)
-                        .build();
-                }
-                case STORE -> {
-                    var tempFile = runContext.workingDir().createTempFile(".ion").toFile();
-                    var storedCount = new AtomicInteger(0);
-                    try (var output = new BufferedOutputStream(new FileOutputStream(tempFile), FileSerde.BUFFER_SIZE)) {
-                        paginate(runContext, effectivePageCap, "recipients", fetcher, recipient -> {
-                            try {
-                                FileSerde.write(output, JacksonMapper.toMap(recipient));
-                                storedCount.incrementAndGet();
-                                return true;
-                            } catch (Exception e) {
-                                throw new RuntimeException("Failed writing recipient record to ION storage", e);
-                            }
-                        });
-                    }
-                    var uri = runContext.storage().putFile(tempFile);
-                    yield Output.builder()
-                        .size(storedCount.get())
-                        .uri(uri)
-                        .build();
-                }
-                case NONE -> {
-                    paginate(runContext, effectivePageCap, "recipients", fetcher, recipient -> true);
-                    yield Output.builder()
-                        .size(0)
-                        .build();
-                }
-            };
+            return fetch(
+                runContext,
+                rFetchType,
+                effectivePageCap,
+                "recipients",
+                fetcher,
+                (size, rows, row, uri) -> Output.builder()
+                    .size(size)
+                    .rows(rows)
+                    .row(row)
+                    .uri(uri)
+                    .build()
+            );
         }
     }
 

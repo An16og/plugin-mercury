@@ -1,8 +1,8 @@
 group: io.kestra.plugin.mercury
 name: "mercury"
 title: "Mercury"
-description: "Connect to Mercury business banking to inspect and orchestrate accounts."
-body: "Integrate Kestra with the Mercury business banking API to query account balances, inspect account details, and orchestrate financial workflows."
+description: "Connect to Mercury business banking to inspect and orchestrate accounts, transactions, payment recipients, and corporate cards."
+body: "Integrate Kestra with the Mercury business banking API to query account balances, inspect account details, list transactions, manage payment recipients, list corporate cards, and orchestrate financial workflows."
 videos: []
 createdBy: "Kestra Core Team"
 managedBy: "Kestra Core Team"

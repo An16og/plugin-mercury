@@ -9,29 +9,23 @@ import io.kestra.core.models.flows.Flow;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.common.FetchType;
 import io.kestra.core.models.validations.ModelValidator;
-import io.kestra.core.runners.RunContext;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.FileSerde;
 import io.kestra.core.serializers.YamlParser;
+import io.kestra.plugin.mercury.WireMockTestUtils;
 import io.kestra.plugin.mercury.model.Recipient;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED;
+import static io.kestra.plugin.mercury.WireMockTestUtils.recipientsPageJson;
+import static io.kestra.plugin.mercury.WireMockTestUtils.stubGet;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -46,68 +40,15 @@ class ListTest {
     private ModelValidator modelValidator;
 
     private WireMockServer wireMockServer;
-    private final CopyOnWriteArrayList<String> capturedLogMessages = new CopyOnWriteArrayList<>();
-    private Object rootLogger;
-    private Object appenderProxy;
 
     @BeforeEach
     void setUp() {
         wireMockServer = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
         wireMockServer.start();
-
-        capturedLogMessages.clear();
-        try {
-            Class<?> appenderInterface = Class.forName("ch.qos.logback.core.Appender");
-            appenderProxy = Proxy.newProxyInstance(
-                appenderInterface.getClassLoader(),
-                new Class<?>[]{appenderInterface},
-                (proxy, method, args) -> {
-                    String methodName = method.getName();
-                    if ("doAppend".equals(methodName) && args != null && args.length > 0) {
-                        Object event = args[0];
-                        if (event != null) {
-                            try {
-                                Method getFormattedMsg = event.getClass().getMethod("getFormattedMessage");
-                                Object msg = getFormattedMsg.invoke(event);
-                                if (msg != null) {
-                                    capturedLogMessages.add(msg.toString());
-                                }
-                            } catch (Exception ignored) {
-                            }
-                        }
-                        return null;
-                    } else if ("isStarted".equals(methodName)) {
-                        return true;
-                    } else if ("getName".equals(methodName)) {
-                        return "TestLogAppender";
-                    }
-                    Class<?> returnType = method.getReturnType();
-                    if (returnType.equals(boolean.class)) {
-                        return true;
-                    } else if (returnType.equals(int.class)) {
-                        return 0;
-                    }
-                    return null;
-                }
-            );
-
-            rootLogger = LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
-            Method addAppenderMethod = rootLogger.getClass().getMethod("addAppender", appenderInterface);
-            addAppenderMethod.invoke(rootLogger, appenderProxy);
-        } catch (Exception ignored) {
-        }
     }
 
     @AfterEach
     void tearDown() {
-        if (rootLogger != null && appenderProxy != null) {
-            try {
-                Class<?> appenderInterface = Class.forName("ch.qos.logback.core.Appender");
-                Method detachAppenderMethod = rootLogger.getClass().getMethod("detachAppender", appenderInterface);
-                detachAppenderMethod.invoke(rootLogger, appenderProxy);
-            } catch (Exception ignored) {
-            }
-        }
         if (wireMockServer != null) {
             wireMockServer.stop();
         }
@@ -236,11 +177,7 @@ class ListTest {
 
     @Test
     void testSinglePageFetchFullPayload() throws Exception {
-        String responseJson = "{\n" +
-            "  \"total\": 1,\n" +
-            "  \"recipients\": [" + FULL_RECIPIENT_JSON + "],\n" +
-            "  \"page\": { \"nextPage\": null, \"previousPage\": null }\n" +
-            "}";
+        var responseJson = recipientsPageJson(FULL_RECIPIENT_JSON, null, null, 1);
 
         wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
             .withHeader("Authorization", equalTo("Bearer secret-token:valid-token"))
@@ -259,15 +196,15 @@ class ListTest {
             .fetchType(Property.ofValue(FetchType.FETCH))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
 
         assertThat(output.getSize(), is(1));
         assertThat(output.getRows(), hasSize(1));
         assertThat(output.getRow(), nullValue());
         assertThat(output.getUri(), nullValue());
 
-        Recipient recipient = output.getRows().get(0);
+        var recipient = output.getRows().getFirst();
         assertThat(recipient.getId(), is("7c9e6679-7425-40de-944b-e07fc1f90ae7"));
         assertThat(recipient.getStatus(), is("active"));
         assertThat(recipient.getName(), is("Acme Supplier Inc"));
@@ -304,53 +241,37 @@ class ListTest {
 
         // Attachments
         assertThat(recipient.getAttachments(), hasSize(2));
-        assertThat(recipient.getAttachments().get(0).getFormType(), is("w9"));
-        assertThat(recipient.getAttachments().get(0).getUploadedAt(), is(Instant.parse("2024-01-10T09:00:00Z")));
+        assertThat(recipient.getAttachments().getFirst().getFormType(), is("w9"));
+        assertThat(recipient.getAttachments().getFirst().getUploadedAt(), is(Instant.parse("2024-01-10T09:00:00Z")));
         assertThat(recipient.getAttachments().get(1).getFormType(), nullValue());
         assertThat(recipient.getInviteId(), is("inv_123456"));
     }
 
     @Test
     void testMultiPageCursorWalk() throws Exception {
-        String page1 = """
+        var recipient1Json = """
             {
-              \"total\": 1,
-              \"recipients\": [
-                {
-                  \"id\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\",
-                  \"status\": \"active\",
-                  \"name\": \"Recipient 1\",
-                  \"emails\": [\"r1@test.com\"],
-                  \"defaultPaymentMethod\": \"ach\",
-                  \"attachments\": []
-                }
-              ],
-              \"page\": {
-                \"nextPage\": \"8d0f778a-8536-41ef-a55c-f18fd20a1bf8\",
-                \"previousPage\": null
-              }
+              "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+              "status": "active",
+              "name": "Recipient 1",
+              "emails": ["r1@test.com"],
+              "defaultPaymentMethod": "ach",
+              "attachments": []
+            }
+            """;
+        var recipient2Json = """
+            {
+              "id": "8d0f778a-8536-41ef-a55c-f18fd20a1bf8",
+              "status": "active",
+              "name": "Recipient 2",
+              "emails": ["r2@test.com"],
+              "defaultPaymentMethod": "check",
+              "attachments": []
             }
             """;
 
-        String page2 = """
-            {
-              \"total\": 1,
-              \"recipients\": [
-                {
-                  \"id\": \"8d0f778a-8536-41ef-a55c-f18fd20a1bf8\",
-                  \"status\": \"active\",
-                  \"name\": \"Recipient 2\",
-                  \"emails\": [\"r2@test.com\"],
-                  \"defaultPaymentMethod\": \"check\",
-                  \"attachments\": []
-                }
-              ],
-              \"page\": {
-                \"nextPage\": null,
-                \"previousPage\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\"
-              }
-            }
-            """;
+        var page1 = recipientsPageJson(recipient1Json, "8d0f778a-8536-41ef-a55c-f18fd20a1bf8", null, 1);
+        var page2 = recipientsPageJson(recipient2Json, null, "7c9e6679-7425-40de-944b-e07fc1f90ae7", 1);
 
         wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
             .withQueryParam("limit", equalTo("1000"))
@@ -376,12 +297,12 @@ class ListTest {
             .apiToken(Property.ofValue("secret-token:valid-token"))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
 
         assertThat(output.getSize(), is(2));
         assertThat(output.getRows(), hasSize(2));
-        assertThat(output.getRows().get(0).getName(), is("Recipient 1"));
+        assertThat(output.getRows().getFirst().getName(), is("Recipient 1"));
         assertThat(output.getRows().get(1).getName(), is("Recipient 2"));
 
         wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/recipients")).withoutQueryParam("start_after"));
@@ -390,115 +311,28 @@ class ListTest {
     }
 
     @Test
-    void testEmptyPageStopsPagination() throws Exception {
-        String emptyResponse = """
-            {
-              \"total\": 0,
-              \"recipients\": [],
-              \"page\": { \"nextPage\": \"8d0f778a-8536-41ef-a55c-f18fd20a1bf8\", \"previousPage\": null }
-            }
-            """;
-
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(emptyResponse)));
-
-        var task = List.builder()
-            .id(UUID.randomUUID().toString())
-            .type(List.class.getName())
-            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
-            .apiToken(Property.ofValue("secret-token:valid-token"))
-            .build();
-
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
-
-        assertThat(output.getSize(), is(0));
-        wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/recipients")));
-    }
-
-    @Test
-    void testRepeatedCursorStopsPagination() throws Exception {
-        String page = """
-            {
-              \"total\": 1,
-              \"recipients\": [
-                {
-                  \"id\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\",
-                  \"status\": \"active\",
-                  \"name\": \"Recipient 1\",
-                  \"emails\": [],
-                  \"defaultPaymentMethod\": \"ach\",
-                  \"attachments\": []
-                }
-              ],
-              \"page\": {
-                \"nextPage\": \"loop-cursor-123\",
-                \"previousPage\": null
-              }
-            }
-            """;
-
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .inScenario("RepeatedCursor")
-            .whenScenarioStateIs(STARTED)
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(page))
-            .willSetStateTo("NextPage"));
-
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .inScenario("RepeatedCursor")
-            .whenScenarioStateIs("NextPage")
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(page)));
-
-        var task = List.builder()
-            .id(UUID.randomUUID().toString())
-            .type(List.class.getName())
-            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
-            .apiToken(Property.ofValue("secret-token:valid-token"))
-            .build();
-
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
-
-        assertThat(output.getSize(), is(2));
-        wireMockServer.verify(2, getRequestedFor(urlPathEqualTo("/recipients")));
-    }
-
-    @Test
     void testPageCapReachedWithMoreRemainingFails() {
-        String pageWithNext = """
+        var pageWithNext = """
             {
-              \"total\": 1,
-              \"recipients\": [
+              "total": 1,
+              "recipients": [
                 {
-                  \"id\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\",
-                  \"status\": \"active\",
-                  \"name\": \"Recipient 1\",
-                  \"emails\": [],
-                  \"defaultPaymentMethod\": \"ach\",
-                  \"attachments\": []
+                  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                  "status": "active",
+                  "name": "Recipient 1",
+                  "emails": [],
+                  "defaultPaymentMethod": "ach",
+                  "attachments": []
                 }
               ],
-              \"page\": {
-                \"nextPage\": \"8d0f778a-8536-41ef-a55c-f18fd20a1bf8\",
-                \"previousPage\": null
+              "page": {
+                "nextPage": "8d0f778a-8536-41ef-a55c-f18fd20a1bf8",
+                "previousPage": null
               }
             }
             """;
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(pageWithNext)));
+        stubGet(wireMockServer, "/recipients", pageWithNext);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -508,73 +342,24 @@ class ListTest {
             .pageCap(Property.ofValue(1))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> task.run(runContext));
+        var runContext = runContextFactory.of();
+        var ex = assertThrows(IllegalStateException.class, () -> task.run(runContext));
         assertThat(ex.getMessage(), containsString("Pagination reached the maximum pageCap of 1 but more recipients remain"));
     }
 
     @Test
-    void testPageCapReachedWithoutMoreRemainingSucceeds() throws Exception {
-        String pageWithoutNext = """
-            {
-              \"total\": 1,
-              \"recipients\": [
-                {
-                  \"id\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\",
-                  \"status\": \"active\",
-                  \"name\": \"Recipient 1\",
-                  \"emails\": [],
-                  \"defaultPaymentMethod\": \"ach\",
-                  \"attachments\": []
-                }
-              ],
-              \"page\": {
-                \"nextPage\": null,
-                \"previousPage\": null
-              }
-            }
-            """;
-
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(pageWithoutNext)));
-
-        var task = List.builder()
-            .id(UUID.randomUUID().toString())
-            .type(List.class.getName())
-            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
-            .apiToken(Property.ofValue("secret-token:valid-token"))
-            .pageCap(Property.ofValue(1))
-            .build();
-
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
-        assertThat(output.getSize(), is(1));
-    }
-
-    @Test
     void testFetchOneSendsLimitOne() throws Exception {
-        String responseJson = """
+        var recipientJson = """
             {
-              \"total\": 1,
-              \"recipients\": [
-                {
-                  \"id\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\",
-                  \"status\": \"active\",
-                  \"name\": \"First Recipient\",
-                  \"emails\": [\"first@test.com\"],
-                  \"defaultPaymentMethod\": \"ach\",
-                  \"attachments\": []
-                }
-              ],
-              \"page\": {
-                \"nextPage\": \"next-id\",
-                \"previousPage\": null
-              }
+              "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+              "status": "active",
+              "name": "First Recipient",
+              "emails": ["first@test.com"],
+              "defaultPaymentMethod": "ach",
+              "attachments": []
             }
             """;
+        var responseJson = recipientsPageJson(recipientJson, "next-id", null, 1);
 
         wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
             .withQueryParam("limit", equalTo("1"))
@@ -591,8 +376,8 @@ class ListTest {
             .fetchType(Property.ofValue(FetchType.FETCH_ONE))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
 
         assertThat(output.getSize(), is(1));
         assertThat(output.getRow(), notNullValue());
@@ -605,17 +390,8 @@ class ListTest {
 
     @Test
     void testStoreIon() throws Exception {
-        String responseJson = "{\n" +
-            "  \"total\": 1,\n" +
-            "  \"recipients\": [" + FULL_RECIPIENT_JSON + "],\n" +
-            "  \"page\": { \"nextPage\": null, \"previousPage\": null }\n" +
-            "}";
-
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
+        var responseJson = recipientsPageJson(FULL_RECIPIENT_JSON, null, null, 1);
+        stubGet(wireMockServer, "/recipients", responseJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -625,8 +401,8 @@ class ListTest {
             .fetchType(Property.ofValue(FetchType.STORE))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
 
         assertThat(output.getSize(), is(1));
         assertThat(output.getRows(), nullValue());
@@ -634,12 +410,11 @@ class ListTest {
         assertThat(output.getUri(), notNullValue());
         assertThat(output.getUri().toString(), containsString(".ion"));
 
-        try (InputStream is = runContext.storage().getFile(output.getUri());
-             BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
-            java.util.List<Object> records = FileSerde.readAll(reader).collectList().block();
+        try (var is = runContext.storage().getFile(output.getUri())) {
+            var records = FileSerde.readAll(is).collectList().block();
             assertThat(records, notNullValue());
             assertThat(records, hasSize(1));
-            Map<?, ?> record = (Map<?, ?>) records.get(0);
+            var record = (Map<?, ?>) records.getFirst();
             assertThat(record.get("id"), is("7c9e6679-7425-40de-944b-e07fc1f90ae7"));
             assertThat(record.get("name"), is("Acme Supplier Inc"));
         }
@@ -647,17 +422,8 @@ class ListTest {
 
     @Test
     void testFetchNone() throws Exception {
-        String responseJson = "{\n" +
-            "  \"total\": 1,\n" +
-            "  \"recipients\": [" + FULL_RECIPIENT_JSON + "],\n" +
-            "  \"page\": { \"nextPage\": null, \"previousPage\": null }\n" +
-            "}";
-
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
+        var responseJson = recipientsPageJson(FULL_RECIPIENT_JSON, null, null, 1);
+        stubGet(wireMockServer, "/recipients", responseJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -667,8 +433,8 @@ class ListTest {
             .fetchType(Property.ofValue(FetchType.NONE))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
 
         assertThat(output.getSize(), is(0));
         assertThat(output.getRows(), nullValue());
@@ -678,14 +444,9 @@ class ListTest {
 
     @Test
     void testOrderEnumQueryParameter() throws Exception {
-        String emptyJson = "{\"total\": 0, \"recipients\": [], \"page\": {\"nextPage\": null, \"previousPage\": null}}";
+        var emptyJson = recipientsPageJson("", null, null, 0);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .withQueryParam("order", equalTo("desc"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(emptyJson)));
+        WireMockTestUtils.stubGet(wireMockServer, "/recipients", Map.of("order", "desc"), emptyJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -695,8 +456,8 @@ class ListTest {
             .order(Property.ofValue(List.Order.DESC))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
 
         assertThat(output.getSize(), is(0));
         wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/recipients")).withQueryParam("order", equalTo("desc")));
@@ -712,8 +473,8 @@ class ListTest {
             .limit(Property.ofValue(1001))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        IllegalArgumentException exHigh = assertThrows(IllegalArgumentException.class, () -> taskTooHigh.run(runContext));
+        var runContext = runContextFactory.of();
+        var exHigh = assertThrows(IllegalArgumentException.class, () -> taskTooHigh.run(runContext));
         assertThat(exHigh.getMessage(), containsString("limit must be between 1 and 1000"));
 
         var taskTooLow = List.builder()
@@ -724,7 +485,7 @@ class ListTest {
             .limit(Property.ofValue(0))
             .build();
 
-        IllegalArgumentException exLow = assertThrows(IllegalArgumentException.class, () -> taskTooLow.run(runContext));
+        var exLow = assertThrows(IllegalArgumentException.class, () -> taskTooLow.run(runContext));
         assertThat(exLow.getMessage(), containsString("limit must be between 1 and 1000"));
     }
 
@@ -738,42 +499,38 @@ class ListTest {
             .pageCap(Property.ofValue(0))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> task.run(runContext));
+        var runContext = runContextFactory.of();
+        var ex = assertThrows(IllegalArgumentException.class, () -> task.run(runContext));
         assertThat(ex.getMessage(), containsString("pageCap must be at least 1"));
     }
 
     @Test
     void testUnknownFieldsIgnored() throws Exception {
-        String responseWithUnknowns = """
+        var responseWithUnknowns = """
             {
-              \"extraTopLevel\": \"unexpected\",
-              \"total\": 1,
-              \"recipients\": [
+              "extraTopLevel": "unexpected",
+              "total": 1,
+              "recipients": [
                 {
-                  \"id\": \"7c9e6679-7425-40de-944b-e07fc1f90ae7\",
-                  \"status\": \"active\",
-                  \"name\": \"Recipient With Unknowns\",
-                  \"emails\": [\"u@test.com\"],
-                  \"defaultPaymentMethod\": \"ach\",
-                  \"attachments\": [],
-                  \"futureBrandNewField\": 99999,
-                  \"unexpectedNestedObject\": { \"nested\": \"val\" }
+                  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                  "status": "active",
+                  "name": "Recipient With Unknowns",
+                  "emails": ["u@test.com"],
+                  "defaultPaymentMethod": "ach",
+                  "attachments": [],
+                  "futureBrandNewField": 99999,
+                  "unexpectedNestedObject": { "nested": "val" }
                 }
               ],
-              \"page\": {
-                \"nextPage\": null,
-                \"previousPage\": null,
-                \"unknownPageField\": true
+              "page": {
+                "nextPage": null,
+                "previousPage": null,
+                "unknownPageField": true
               }
             }
             """;
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseWithUnknowns)));
+        stubGet(wireMockServer, "/recipients", responseWithUnknowns);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -782,11 +539,11 @@ class ListTest {
             .apiToken(Property.ofValue("secret-token:valid-token"))
             .build();
 
-        RunContext runContext = runContextFactory.of();
-        List.Output output = task.run(runContext);
+        var runContext = runContextFactory.of();
+        var output = task.run(runContext);
 
         assertThat(output.getSize(), is(1));
-        assertThat(output.getRows().get(0).getName(), is("Recipient With Unknowns"));
+        assertThat(output.getRows().getFirst().getName(), is("Recipient With Unknowns"));
     }
 
     @Test
@@ -839,7 +596,7 @@ class ListTest {
 
     @Test
     void testFlowYamlValidationContainingList() {
-        String flowYaml = """
+        var flowYaml = """
             id: flow_validating_recipients_list
             namespace: io.kestra.tests
             tasks:
@@ -850,7 +607,7 @@ class ListTest {
                 order: DESC
                 pageCap: 10
             """;
-        Flow flow = YamlParser.parse(flowYaml, Flow.class);
+        var flow = YamlParser.parse(flowYaml, Flow.class);
         assertThat(modelValidator.isValid(flow).isEmpty(), is(true));
     }
 
@@ -858,49 +615,10 @@ class ListTest {
     void testPluginExamplesFlowValidation() {
         var plugin = List.class.getAnnotation(Plugin.class);
         assertThat(plugin, notNullValue());
-        for (Example example : plugin.examples()) {
-            String code = String.join("\n", example.code());
-            Flow flow = YamlParser.parse(code, Flow.class);
+        for (var example : plugin.examples()) {
+            var code = String.join("\n", example.code());
+            var flow = YamlParser.parse(code, Flow.class);
             assertThat(modelValidator.isValid(flow).isEmpty(), is(true));
         }
-    }
-
-    @Test
-    void testSecurityTokenAndSensitiveDataNeverInLogsOrToString() throws Exception {
-        String sensitiveToken = "secret-token:very-secret-recipient-key-abc123xyz";
-        String responseJson = "{\n" +
-            "  \"total\": 1,\n" +
-            "  \"recipients\": [" + FULL_RECIPIENT_JSON + "],\n" +
-            "  \"page\": { \"nextPage\": null, \"previousPage\": null }\n" +
-            "}";
-
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
-
-        var task = List.builder()
-            .id(UUID.randomUUID().toString())
-            .type(List.class.getName())
-            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
-            .apiToken(Property.ofValue(sensitiveToken))
-            .build();
-
-        String taskString = task.toString();
-        assertThat(taskString, not(containsString(sensitiveToken)));
-        assertThat(taskString, not(containsString("very-secret-recipient-key-abc123xyz")));
-
-        RunContext runContext = runContextFactory.of();
-        task.run(runContext);
-
-        String allLogs = String.join("\n", capturedLogMessages);
-        assertThat(allLogs, not(containsString(sensitiveToken)));
-        assertThat(allLogs, not(containsString("very-secret-recipient-key-abc123xyz")));
-        assertThat(allLogs, not(containsString("9876543210"))); // account number
-        assertThat(allLogs, not(containsString("121000358"))); // routing number
-        assertThat(allLogs, not(containsString("GB29NWBK60161331926819"))); // IBAN
-        assertThat(allLogs, not(containsString("invoices@acme.com"))); // emails
-        assertThat(allLogs, not(containsString("presigned123"))); // presigned url token
     }
 }

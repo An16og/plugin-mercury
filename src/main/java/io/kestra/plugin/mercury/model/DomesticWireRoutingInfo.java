@@ -19,14 +19,14 @@ public class DomesticWireRoutingInfo {
     @Schema(
         title = "Account number",
         description = """
-            Bank account number for domestic wire transfers."""
+            Bank account number for domestic wire or real-time payment (RTP) transfers."""
     )
     private String accountNumber;
 
     @Schema(
         title = "Routing number",
         description = """
-            Nine-digit Fedwire routing transit number."""
+            Nine-digit routing transit number."""
     )
     private String routingNumber;
 
@@ -42,5 +42,5 @@ public class DomesticWireRoutingInfo {
         description = """
             Postal address of the recipient financial institution."""
     )
-    private AddressWithoutName address;
+    private Address address;
 }

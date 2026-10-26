@@ -92,9 +92,9 @@ public class Recipient {
     @Schema(
         title = "Default address",
         description = """
-            Default postal address of the recipient without recipient name."""
+            Default postal address of the recipient."""
     )
-    private AddressWithoutName defaultAddress;
+    private Address defaultAddress;
 
     @Schema(
         title = "Check delivery information",
@@ -122,7 +122,7 @@ public class Recipient {
         description = """
             Bank routing details for The Clearing House Real-Time Payments (RTP). Sensitive banking details; never log."""
     )
-    private RealTimePaymentRoutingInfo realTimePaymentRoutingInfo;
+    private DomesticWireRoutingInfo realTimePaymentRoutingInfo;
 
     @Schema(
         title = "International wire routing information",

@@ -19,7 +19,7 @@ public class Address {
     @Schema(
         title = "Recipient address name",
         description = """
-            Name associated with this address."""
+            Name associated with this address, if present."""
     )
     private String name;
 

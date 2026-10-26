@@ -21,5 +21,5 @@ public class CheckInfo {
         description = """
             The recipient postal address where physical checks are mailed."""
     )
-    private AddressWithoutName address;
+    private Address address;
 }

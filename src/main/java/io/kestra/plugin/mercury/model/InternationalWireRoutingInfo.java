@@ -72,5 +72,5 @@ public class InternationalWireRoutingInfo {
         description = """
             Postal address of the recipient financial institution."""
     )
-    private AddressWithoutName address;
+    private Address address;
 }

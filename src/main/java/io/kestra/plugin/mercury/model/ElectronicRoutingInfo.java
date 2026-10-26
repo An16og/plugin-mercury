@@ -49,5 +49,5 @@ public class ElectronicRoutingInfo {
         description = """
             Postal address of the recipient financial institution."""
     )
-    private AddressWithoutName address;
+    private Address address;
 }

@@ -11,8 +11,6 @@ import io.kestra.core.models.validations.ModelValidator;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.FileSerde;
 import io.kestra.core.serializers.YamlParser;
-import io.kestra.plugin.mercury.WireMockTestUtils;
-import io.kestra.plugin.mercury.model.Card;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -132,7 +130,6 @@ class ListTest {
         assertThat(card.getExpiration().getMonth(), is(8));
         assertThat(card.getExpiration().getYear(), is(2028));
 
-        // Budgets in cents
         assertThat(card.getBudgets(), hasSize(1));
         assertThat(card.getBudgets().getFirst().getAmountCents(), is(100000L));
         assertThat(card.getBudgets().getFirst().getRemainingAmountCents(), is(75000L));
@@ -144,7 +141,6 @@ class ListTest {
         assertThat(card.getMerchantLock(), notNullValue());
         assertThat(card.getMerchantLock().getName(), is("Delta Air Lines"));
 
-        // Spend limit in cents
         assertThat(card.getSpendLimit(), notNullValue());
         assertThat(card.getSpendLimit().getAmountCents(), is(250000L));
         assertThat(card.getSpendLimit().getAtmAmountCents(), is(50000L));
@@ -405,6 +401,36 @@ class ListTest {
         var ex = assertThrows(IllegalArgumentException.class, () -> task.run(runContext));
         assertThat(ex.getMessage(), containsString("Invalid accountId 'not-a-valid-uuid': must be a valid UUID"));
         wireMockServer.verify(0, getRequestedFor(anyUrl()));
+    }
+
+    @Test
+    void testRenderedPropertiesReachQueryAndAreValidated() throws Exception {
+        stubGet(wireMockServer, "/cards", Map.of("accountId", "4b54e3d6-72aa-4c07-b3c6-9f4a56a64010", "limit", "10", "order", "asc"), cardsPageJson("", null, null));
+
+        var runContext = runContextFactory.of(Map.of("accountId", "4b54e3d6-72aa-4c07-b3c6-9f4a56a64010", "limit", 10, "badLimit", 0));
+        var task = List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(List.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofExpression("{{ accountId }}"))
+            .limit(Property.ofExpression("{{ limit }}"))
+            .build();
+
+        task.run(runContext);
+        wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/cards"))
+            .withQueryParam("accountId", equalTo("4b54e3d6-72aa-4c07-b3c6-9f4a56a64010"))
+            .withQueryParam("limit", equalTo("10")));
+
+        var invalid = List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(List.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .limit(Property.ofExpression("{{ badLimit }}"))
+            .build();
+        var ex = assertThrows(IllegalArgumentException.class, () -> invalid.run(runContext));
+        assertThat(ex.getMessage(), containsString("limit must be between 1 and 1000"));
     }
 
     @Test

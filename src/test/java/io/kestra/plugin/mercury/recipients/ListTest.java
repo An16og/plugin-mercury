@@ -11,8 +11,6 @@ import io.kestra.core.models.validations.ModelValidator;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.FileSerde;
 import io.kestra.core.serializers.YamlParser;
-import io.kestra.plugin.mercury.WireMockTestUtils;
-import io.kestra.plugin.mercury.model.Recipient;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -431,6 +429,36 @@ class ListTest {
 
         assertThat(output.getSize(), is(0));
         wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/recipients")).withQueryParam("order", equalTo("desc")));
+    }
+
+    @Test
+    void testRenderedPropertiesReachQueryAndAreValidated() throws Exception {
+        stubGet(wireMockServer, "/recipients", Map.of("limit", "10", "order", "desc"), recipientsPageJson("", null, null, 0));
+
+        var runContext = runContextFactory.of(Map.of("limit", 10, "order", "DESC", "badLimit", 0));
+        var task = List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(List.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .limit(Property.ofExpression("{{ limit }}"))
+            .order(Property.ofExpression("{{ order }}"))
+            .build();
+
+        task.run(runContext);
+        wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/recipients"))
+            .withQueryParam("limit", equalTo("10"))
+            .withQueryParam("order", equalTo("desc")));
+
+        var invalid = List.builder()
+            .id(UUID.randomUUID().toString())
+            .type(List.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .limit(Property.ofExpression("{{ badLimit }}"))
+            .build();
+        var ex = assertThrows(IllegalArgumentException.class, () -> invalid.run(runContext));
+        assertThat(ex.getMessage(), containsString("limit must be between 1 and 1000"));
     }
 
     @Test

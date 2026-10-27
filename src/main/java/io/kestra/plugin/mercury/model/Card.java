@@ -2,14 +2,13 @@ package io.kestra.plugin.mercury.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.swagger.v3.oas.annotations.media.Schema;
+import java.time.Instant;
+import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.extern.jackson.Jacksonized;
-
-import java.time.Instant;
-import java.util.List;
 
 @Getter
 @Builder
@@ -94,7 +93,7 @@ public class Card {
         description = """
             Month and year the card expires."""
     )
-    private CardExpiration expiration;
+    private Expiration expiration;
 
     @Schema(
         title = "Spend limit type",
@@ -108,7 +107,7 @@ public class Card {
         description = """
             Active budget limits linked to this card and cardholder, in cents. Empty under cardLimit or when no budget is linked."""
     )
-    private List<CardBudget> budgets;
+    private List<Budget> budgets;
 
     @Schema(
         title = "Category locks",
@@ -136,7 +135,7 @@ public class Card {
         description = """
             Merchant lock applied to this card, restricting purchases to a single vendor. Null when not locked to a merchant."""
     )
-    private MerchantInfo merchantLock;
+    private MerchantLock merchantLock;
 
     @Schema(
         title = "Physical card status",
@@ -151,4 +150,117 @@ public class Card {
             Card-level spending controls in cents. Null when limits are unavailable or governed by budgets."""
     )
     private SpendLimit spendLimit;
+
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Jacksonized
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Expiration {
+
+        @Schema(
+            title = "Expiration month",
+            description = """
+                Two-digit calendar month when the card expires (1-12)."""
+        )
+        private Integer month;
+
+        @Schema(
+            title = "Expiration year",
+            description = """
+                Four-digit calendar year when the card expires (2000-2999)."""
+        )
+        private Integer year;
+    }
+
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Jacksonized
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Budget {
+
+        @Schema(
+            title = "Budget ID",
+            description = """
+                Unique identifier (UUID) for this budget."""
+        )
+        private String id;
+
+        @Schema(
+            title = "Budget name",
+            description = """
+                Display name of the budget."""
+        )
+        private String name;
+
+        @Schema(
+            title = "Budget amount in cents",
+            description = """
+                The cardholder's spend limit for the current budget cycle, in cents."""
+        )
+        private Long amountCents;
+
+        @Schema(
+            title = "Remaining budget amount in cents",
+            description = """
+                Current-cycle limit minus recorded spend, clamped at zero, in cents."""
+        )
+        private Long remainingAmountCents;
+    }
+
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Jacksonized
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class MerchantLock {
+
+        @Schema(
+            title = "Merchant ID",
+            description = """
+                Unique identifier (UUID) of the locked merchant."""
+        )
+        private String id;
+
+        @Schema(
+            title = "Merchant name",
+            description = """
+                Display name of the locked merchant."""
+        )
+        private String name;
+    }
+
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Jacksonized
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class SpendLimit {
+
+        @Schema(
+            title = "Spend limit in cents",
+            description = """
+                Maximum total spend allowed per rolling interval, in cents."""
+        )
+        private Long amountCents;
+
+        @Schema(
+            title = "ATM limit in cents",
+            description = """
+                Maximum ATM cash withdrawal allowed per rolling interval, in cents. Null for virtual cards and credit cards."""
+        )
+        private Long atmAmountCents;
+
+        @Schema(
+            title = "Spend limit interval",
+            description = """
+                Rolling time window the spend limit applies to. Possible values: daily, weekly, monthly, yearly."""
+        )
+        private String interval;
+    }
 }

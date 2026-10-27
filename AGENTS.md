@@ -31,6 +31,7 @@ Infrastructure dependencies (Docker Compose services):
 ### Key Plugin Classes
 
 - `io.kestra.plugin.mercury.AbstractMercuryConnection`
+- `io.kestra.plugin.mercury.AbstractMercuryList`
 - `io.kestra.plugin.mercury.accounts.List`
 - `io.kestra.plugin.mercury.accounts.Get`
 - `io.kestra.plugin.mercury.cards.List`
@@ -44,6 +45,7 @@ Infrastructure dependencies (Docker Compose services):
 plugin-mercury/
 ├── src/main/java/io/kestra/plugin/mercury/
 │   ├── AbstractMercuryConnection.java
+│   ├── AbstractMercuryList.java
 │   ├── accounts/
 │   │   ├── List.java
 │   │   └── Get.java

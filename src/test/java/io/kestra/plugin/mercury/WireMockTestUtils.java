@@ -25,9 +25,7 @@ public final class WireMockTestUtils {
 
     public static void stubGet(WireMockServer server, String path, Map<String, String> queryParams, Map<String, String> headers, String responseBody) {
         var builder = get(urlPathEqualTo(path));
-        if (queryParams != null) {
-            queryParams.forEach((k, v) -> builder.withQueryParam(k, equalTo(v)));
-        }
+        queryParams.forEach((k, v) -> builder.withQueryParam(k, equalTo(v)));
         headers.forEach((k, v) -> builder.withHeader(k, equalTo(v)));
         server.stubFor(builder
             .willReturn(aResponse()

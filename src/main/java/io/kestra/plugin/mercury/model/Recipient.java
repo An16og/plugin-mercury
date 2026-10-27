@@ -2,14 +2,15 @@ package io.kestra.plugin.mercury.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.swagger.v3.oas.annotations.media.Schema;
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.extern.jackson.Jacksonized;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
 @Getter
 @Builder

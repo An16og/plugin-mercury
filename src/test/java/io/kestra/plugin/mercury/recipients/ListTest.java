@@ -217,6 +217,7 @@ class ListTest {
         assertThat(recipient.getElectronicRoutingInfo().getElectronicAccountType(), is("businessChecking"));
         assertThat(recipient.getDomesticWireRoutingInfo(), notNullValue());
         assertThat(recipient.getDomesticWireRoutingInfo().getRoutingNumber(), is("121000358"));
+        assertThat(recipient.getDomesticWireRoutingInfo().getElectronicAccountType(), nullValue());
         assertThat(recipient.getRealTimePaymentRoutingInfo(), notNullValue());
 
         assertThat(recipient.getInternationalWireRoutingInfo(), notNullValue());

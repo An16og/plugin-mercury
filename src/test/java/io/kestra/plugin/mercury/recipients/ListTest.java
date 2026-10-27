@@ -3,7 +3,6 @@ package io.kestra.plugin.mercury.recipients;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.kestra.core.junit.annotations.KestraTest;
-import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.flows.Flow;
 import io.kestra.core.models.property.Property;
@@ -179,14 +178,7 @@ class ListTest {
     void testSinglePageFetchFullPayload() throws Exception {
         var responseJson = recipientsPageJson(FULL_RECIPIENT_JSON, null, null, 1);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .withHeader("Authorization", equalTo("Bearer secret-token:valid-token"))
-            .withQueryParam("limit", equalTo("1000"))
-            .withQueryParam("order", equalTo("asc"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
+        stubGet(wireMockServer, "/recipients", Map.of("limit", "1000", "order", "asc"), Map.of("Authorization", "Bearer secret-token:valid-token"), responseJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -215,7 +207,6 @@ class ListTest {
         assertThat(recipient.getDefaultPaymentMethod(), is("ach"));
         assertThat(recipient.getIsBusiness(), is(true));
 
-        // Nested address
         assertThat(recipient.getAddress(), notNullValue());
         assertThat(recipient.getAddress().getName(), is("Acme Supplier Inc"));
         assertThat(recipient.getAddress().getCity(), is("San Francisco"));
@@ -223,7 +214,6 @@ class ListTest {
         assertThat(recipient.getCheckInfo(), notNullValue());
         assertThat(recipient.getCheckInfo().getAddress().getCity(), is("San Francisco"));
 
-        // Routing blocks
         assertThat(recipient.getElectronicRoutingInfo(), notNullValue());
         assertThat(recipient.getElectronicRoutingInfo().getAccountNumber(), is("9876543210"));
         assertThat(recipient.getElectronicRoutingInfo().getElectronicAccountType(), is("businessChecking"));
@@ -231,7 +221,6 @@ class ListTest {
         assertThat(recipient.getDomesticWireRoutingInfo().getRoutingNumber(), is("121000358"));
         assertThat(recipient.getRealTimePaymentRoutingInfo(), notNullValue());
 
-        // International wire
         assertThat(recipient.getInternationalWireRoutingInfo(), notNullValue());
         assertThat(recipient.getInternationalWireRoutingInfo().getIban(), is("GB29NWBK60161331926819"));
         assertThat(recipient.getInternationalWireRoutingInfo().getCountrySpecific(), notNullValue());
@@ -239,7 +228,6 @@ class ListTest {
         assertThat(recipient.getInternationalWireRoutingInfo().getCorrespondentInfo().getSwiftCode(), is("CORRUS33"));
         assertThat(recipient.getInternationalWireRoutingInfo().getBankDetails().getBankName(), is("NatWest Bank"));
 
-        // Attachments
         assertThat(recipient.getAttachments(), hasSize(2));
         assertThat(recipient.getAttachments().getFirst().getFormType(), is("w9"));
         assertThat(recipient.getAttachments().getFirst().getUploadedAt(), is(Instant.parse("2024-01-10T09:00:00Z")));
@@ -273,22 +261,9 @@ class ListTest {
         var page1 = recipientsPageJson(recipient1Json, "8d0f778a-8536-41ef-a55c-f18fd20a1bf8", null, 1);
         var page2 = recipientsPageJson(recipient2Json, null, "7c9e6679-7425-40de-944b-e07fc1f90ae7", 1);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .withQueryParam("limit", equalTo("1000"))
-            .withQueryParam("order", equalTo("asc"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(page1)));
+        stubGet(wireMockServer, "/recipients", Map.of("limit", "1000", "order", "asc"), page1);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .withQueryParam("limit", equalTo("1000"))
-            .withQueryParam("order", equalTo("asc"))
-            .withQueryParam("start_after", equalTo("8d0f778a-8536-41ef-a55c-f18fd20a1bf8"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(page2)));
+        stubGet(wireMockServer, "/recipients", Map.of("limit", "1000", "order", "asc", "start_after", "8d0f778a-8536-41ef-a55c-f18fd20a1bf8"), page2);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -361,12 +336,7 @@ class ListTest {
             """;
         var responseJson = recipientsPageJson(recipientJson, "next-id", null, 1);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/recipients"))
-            .withQueryParam("limit", equalTo("1"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
+        stubGet(wireMockServer, "/recipients", Map.of("limit", "1"), responseJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -446,7 +416,7 @@ class ListTest {
     void testOrderEnumQueryParameter() throws Exception {
         var emptyJson = recipientsPageJson("", null, null, 0);
 
-        WireMockTestUtils.stubGet(wireMockServer, "/recipients", Map.of("order", "desc"), emptyJson);
+        stubGet(wireMockServer, "/recipients", Map.of("order", "desc"), emptyJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())

@@ -194,11 +194,6 @@ public abstract class AbstractMercuryConnection extends Task {
         return totalItems;
     }
 
-    protected <T> int paginate(RunContext runContext, int pageCap,
-                               PageFetcher<T> fetcher, Predicate<T> itemConsumer) throws Exception {
-        return paginate(runContext, pageCap, "accounts", fetcher, itemConsumer);
-    }
-
     protected <T, O> O fetch(RunContext runContext, FetchType fetchType, int pageCap,
                              String entityName, PageFetcher<T> fetcher,
                              FetchOutputFactory<T, O> outputFactory) throws Exception {

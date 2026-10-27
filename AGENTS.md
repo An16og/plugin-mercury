@@ -54,15 +54,7 @@ plugin-mercury/
 │   ├── transactions/
 │   │   ├── List.java
 │   │   └── Get.java
-│   └── model/
-│       ├── Account.java
-│       ├── AccountPage.java
-│       ├── Card.java
-│       ├── CardsResponse.java
-│       ├── Recipient.java
-│       ├── RecipientsResponse.java
-│       ├── Transaction.java
-│       └── TransactionsResponse.java
+│   └── model/            # API response and output models
 ├── src/test/java/io/kestra/plugin/mercury/
 ├── build.gradle
 └── README.md

@@ -17,7 +17,7 @@ import lombok.extern.jackson.Jacksonized;
 public class Address {
 
     @Schema(
-        title = "Recipient address name",
+        title = "Address name",
         description = """
             Name associated with this address, if present."""
     )

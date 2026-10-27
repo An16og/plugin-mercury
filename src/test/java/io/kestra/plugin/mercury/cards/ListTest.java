@@ -3,7 +3,6 @@ package io.kestra.plugin.mercury.cards;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.kestra.core.junit.annotations.KestraTest;
-import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.flows.Flow;
 import io.kestra.core.models.property.Property;
@@ -99,14 +98,7 @@ class ListTest {
     void testSinglePageFetchFullPayload() throws Exception {
         var responseJson = cardsPageJson(FULL_CARD_JSON, null, null);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/cards"))
-            .withHeader("Authorization", equalTo("Bearer secret-token:valid-token"))
-            .withQueryParam("limit", equalTo("500"))
-            .withQueryParam("order", equalTo("asc"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
+        stubGet(wireMockServer, "/cards", Map.of("limit", "500", "order", "asc"), Map.of("Authorization", "Bearer secret-token:valid-token"), responseJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -136,7 +128,6 @@ class ListTest {
         assertThat(card.getType(), is("virtual"));
         assertThat(card.getKind(), is("debit"));
 
-        // Expiration
         assertThat(card.getExpiration(), notNullValue());
         assertThat(card.getExpiration().getMonth(), is(8));
         assertThat(card.getExpiration().getYear(), is(2028));
@@ -146,12 +137,10 @@ class ListTest {
         assertThat(card.getBudgets().getFirst().getAmountCents(), is(100000L));
         assertThat(card.getBudgets().getFirst().getRemainingAmountCents(), is(75000L));
 
-        // Category locks
         assertThat(card.getCategoryLocks(), contains("Airlines", "Lodging"));
         assertThat(card.getIsAgentCard(), is(true));
         assertThat(card.getNickname(), is("Jane Virtual Card"));
 
-        // Merchant lock
         assertThat(card.getMerchantLock(), notNullValue());
         assertThat(card.getMerchantLock().getName(), is("Delta Air Lines"));
 
@@ -206,22 +195,9 @@ class ListTest {
         var page1 = cardsPageJson(card1Json, "22222222-3333-4444-5555-666666666666", null);
         var page2 = cardsPageJson(card2Json, null, "11111111-2222-3333-4444-555555555555");
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/cards"))
-            .withQueryParam("limit", equalTo("500"))
-            .withQueryParam("order", equalTo("asc"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(page1)));
+        stubGet(wireMockServer, "/cards", Map.of("limit", "500", "order", "asc"), page1);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/cards"))
-            .withQueryParam("limit", equalTo("500"))
-            .withQueryParam("order", equalTo("asc"))
-            .withQueryParam("start_after", equalTo("22222222-3333-4444-5555-666666666666"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(page2)));
+        stubGet(wireMockServer, "/cards", Map.of("limit", "500", "order", "asc", "start_after", "22222222-3333-4444-5555-666666666666"), page2);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -284,12 +260,7 @@ class ListTest {
     void testFetchOneSendsLimitOne() throws Exception {
         var responseJson = cardsPageJson(FULL_CARD_JSON, "next-id", null);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/cards"))
-            .withQueryParam("limit", equalTo("1"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
+        stubGet(wireMockServer, "/cards", Map.of("limit", "1"), responseJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -369,19 +340,7 @@ class ListTest {
     void testAllFiltersReachQueryStringLowercased() throws Exception {
         var responseJson = cardsPageJson("", null, null);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/cards"))
-            .withQueryParam("accountId", equalTo("4b54e3d6-72aa-4c07-b3c6-9f4a56a64010"))
-            .withQueryParam("status", equalTo("active"))
-            .withQueryParam("type", equalTo("virtual"))
-            .withQueryParam("kind", equalTo("debit"))
-            .withQueryParam("userId", equalTo("usr_12345"))
-            .withQueryParam("isAgentCard", equalTo("true"))
-            .withQueryParam("limit", equalTo("500"))
-            .withQueryParam("order", equalTo("desc"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
+        stubGet(wireMockServer, "/cards", Map.of("accountId", "4b54e3d6-72aa-4c07-b3c6-9f4a56a64010", "status", "active", "type", "virtual", "kind", "debit", "userId", "usr_12345", "isAgentCard", "true", "limit", "500", "order", "desc"), responseJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())
@@ -416,13 +375,7 @@ class ListTest {
     void testOmittedFiltersSendNothing() throws Exception {
         var responseJson = cardsPageJson("", null, null);
 
-        wireMockServer.stubFor(get(urlPathEqualTo("/cards"))
-            .withQueryParam("limit", equalTo("500"))
-            .withQueryParam("order", equalTo("asc"))
-            .willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody(responseJson)));
+        stubGet(wireMockServer, "/cards", Map.of("limit", "500", "order", "asc"), responseJson);
 
         var task = List.builder()
             .id(UUID.randomUUID().toString())

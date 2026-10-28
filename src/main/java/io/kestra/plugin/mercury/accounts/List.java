@@ -156,7 +156,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
             return switch (rFetchType) {
                 case FETCH -> {
                     var rows = new ArrayList<Account>();
-                    paginate(runContext, rPageCap, fetcher, account -> {
+                    paginate(runContext, rPageCap, "accounts", fetcher, account -> {
                         rows.add(account);
                         return true;
                     });
@@ -167,7 +167,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                 }
                 case FETCH_ONE -> {
                     var firstAccount = new AtomicReference<Account>();
-                    paginate(runContext, rPageCap, fetcher, account -> {
+                    paginate(runContext, rPageCap, "accounts", fetcher, account -> {
                         firstAccount.set(account);
                         return false;
                     });
@@ -181,7 +181,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                     var tempFile = runContext.workingDir().createTempFile(".ion").toFile();
                     var storedCount = new AtomicInteger(0);
                     try (var output = new BufferedOutputStream(new FileOutputStream(tempFile), FileSerde.BUFFER_SIZE)) {
-                        paginate(runContext, rPageCap, fetcher, account -> {
+                        paginate(runContext, rPageCap, "accounts", fetcher, account -> {
                             try {
                                 FileSerde.write(output, JacksonMapper.toMap(account));
                                 storedCount.incrementAndGet();
@@ -198,7 +198,7 @@ public class List extends AbstractMercuryConnection implements RunnableTask<List
                         .build();
                 }
                 case NONE -> {
-                    paginate(runContext, rPageCap, fetcher, account -> true);
+                    paginate(runContext, rPageCap, "accounts", fetcher, account -> true);
                     yield Output.builder()
                         .size(0)
                         .build();

@@ -17,16 +17,5 @@ import java.util.List;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class AccountPage {
     private List<Account> accounts;
-    private Page page;
-
-    @Getter
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    @Jacksonized
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class Page {
-        private String nextPage;
-        private String previousPage;
-    }
+    private CursorPage page;
 }

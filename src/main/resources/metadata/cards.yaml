@@ -1,0 +1,8 @@
+group: io.kestra.plugin.mercury.cards
+name: "cards"
+title: "Cards"
+description: "Tasks for querying Mercury debit and credit cards."
+body: "Query and inspect Mercury business bank debit and credit cards, spending limits, budgets, and cardholder statuses within Kestra workflows."
+videos: []
+createdBy: "Kestra Core Team"
+managedBy: "Kestra Core Team"

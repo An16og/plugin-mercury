@@ -11,7 +11,9 @@ import io.kestra.core.http.client.configurations.HttpConfiguration;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.Task;
+import io.kestra.core.models.tasks.common.FetchType;
 import io.kestra.core.runners.RunContext;
+import io.kestra.core.serializers.FileSerde;
 import io.kestra.core.serializers.JacksonMapper;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
@@ -24,6 +26,8 @@ import lombok.experimental.SuperBuilder;
 import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
 import org.apache.hc.core5.http.message.BasicHeader;
 
+import java.io.BufferedOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -33,10 +37,13 @@ import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
 @SuperBuilder
@@ -76,6 +83,11 @@ public abstract class AbstractMercuryConnection extends Task {
     @FunctionalInterface
     public interface PageFetcher<T> {
         PageResult<T> fetch(String cursor) throws Exception;
+    }
+
+    @FunctionalInterface
+    public interface FetchOutputFactory<T, O> {
+        O create(Integer size, List<T> rows, T row, URI uri);
     }
 
     public record OffsetPageResult<T>(List<T> items, long total) {}
@@ -130,7 +142,7 @@ public abstract class AbstractMercuryConnection extends Task {
         return executeWithRetry(client, runContext, request, typeRef);
     }
 
-    protected <T> int paginate(RunContext runContext, int pageCap,
+    protected <T> int paginate(RunContext runContext, int pageCap, String entityName,
                                PageFetcher<T> fetcher, Predicate<T> itemConsumer) throws Exception {
         var logger = runContext.logger();
         String currentCursor = null;
@@ -172,14 +184,59 @@ public abstract class AbstractMercuryConnection extends Task {
 
             if (pageCount >= pageCap) {
                 throw new IllegalStateException(
-                    "Pagination reached the maximum pageCap of " + pageCap +
-                    " but more accounts remain. Increase 'pageCap' on the task to fetch more pages.");
+                    "Pagination reached the maximum pageCap of %d but more %s remain. Increase 'pageCap' on the task to fetch more pages."
+                        .formatted(pageCap, entityName));
             }
 
             currentCursor = nextCursor;
         }
 
         return totalItems;
+    }
+
+    protected <T, O> O fetch(RunContext runContext, FetchType fetchType, int pageCap,
+                             String entityName, PageFetcher<T> fetcher,
+                             FetchOutputFactory<T, O> outputFactory) throws Exception {
+        return switch (fetchType) {
+            case FETCH -> {
+                var rows = new ArrayList<T>();
+                paginate(runContext, pageCap, entityName, fetcher, item -> {
+                    rows.add(item);
+                    return true;
+                });
+                yield outputFactory.create(rows.size(), rows, null, null);
+            }
+            case FETCH_ONE -> {
+                var firstItem = new AtomicReference<T>();
+                paginate(runContext, pageCap, entityName, fetcher, item -> {
+                    firstItem.set(item);
+                    return false;
+                });
+                var found = firstItem.get();
+                yield outputFactory.create(found != null ? 1 : 0, null, found, null);
+            }
+            case STORE -> {
+                var tempFile = runContext.workingDir().createTempFile(".ion").toFile();
+                var storedCount = new AtomicInteger(0);
+                try (var output = new BufferedOutputStream(new FileOutputStream(tempFile), FileSerde.BUFFER_SIZE)) {
+                    paginate(runContext, pageCap, entityName, fetcher, item -> {
+                        try {
+                            FileSerde.write(output, JacksonMapper.toMap(item));
+                            storedCount.incrementAndGet();
+                            return true;
+                        } catch (Exception e) {
+                            throw new RuntimeException("Failed writing %s record to ION storage".formatted(entityName), e);
+                        }
+                    });
+                }
+                var uri = runContext.storage().putFile(tempFile);
+                yield outputFactory.create(storedCount.get(), null, null, uri);
+            }
+            case NONE -> {
+                paginate(runContext, pageCap, entityName, fetcher, item -> true);
+                yield outputFactory.create(0, null, null, null);
+            }
+        };
     }
 
     protected <T> int paginateOffset(RunContext runContext, int pageCap,

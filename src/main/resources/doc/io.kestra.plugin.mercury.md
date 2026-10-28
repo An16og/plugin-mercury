@@ -61,3 +61,35 @@ Retrieve full details for a single Mercury bank transaction by its ID.
   - `transactionId` (UUID)
 - **Optional fields:**
   - `baseUrl` (default: `https://api.mercury.com/api/v1`)
+
+### `io.kestra.plugin.mercury.recipients.List`
+
+List payment recipients from Mercury with automatic cursor-based pagination. Output records contain sensitive banking information such as account and routing numbers, IBANs, and presigned attachment URLs.
+
+- **Required fields:**
+  - `apiToken`
+- **Optional fields:**
+  - `baseUrl` (default: `https://api.mercury.com/api/v1`)
+  - `fetchType` (default: `FETCH`; options: `FETCH`, `FETCH_ONE`, `STORE`, `NONE`)
+  - `limit` (default: `1000`, min: `1`, max: `1000`)
+  - `order` (default: `ASC`; options: `ASC`, `DESC`)
+  - `pageCap` (default: `100`, min: `1`)
+
+### `io.kestra.plugin.mercury.cards.List`
+
+Retrieve credit and debit cards across an organization from Mercury with automatic cursor-based pagination and filtering.
+
+- **Required fields:**
+  - `apiToken`
+- **Optional fields:**
+  - `accountId` (UUID)
+  - `baseUrl` (default: `https://api.mercury.com/api/v1`)
+  - `fetchType` (default: `FETCH`; options: `FETCH`, `FETCH_ONE`, `STORE`, `NONE`)
+  - `isAgentCard` (boolean)
+  - `kind` (options: `DEBIT`, `CREDIT`)
+  - `limit` (default: `500`, min: `1`, max: `1000`)
+  - `order` (default: `ASC`; options: `ASC`, `DESC`)
+  - `pageCap` (default: `100`, min: `1`)
+  - `status` (options: `ACTIVE`, `FROZEN`, `CANCELLED`, `INACTIVE`, `EXPIRED`, `SUSPENDED`)
+  - `cardType` (options: `VIRTUAL`, `PHYSICAL`)
+  - `userId`

@@ -149,11 +149,6 @@ public abstract class AbstractMercuryConnection extends Task {
     }
 
     protected BinaryResponse downloadBinary(HttpClient client, RunContext runContext, String path,
-                                            Map<String, Object> queryParams) throws Exception {
-        return downloadBinary(client, runContext, path, queryParams, null, null);
-    }
-
-    protected BinaryResponse downloadBinary(HttpClient client, RunContext runContext, String path,
                                             Map<String, Object> queryParams,
                                             Consumer<HttpResponse<InputStream>> responseValidator,
                                             Consumer<Long> sizeValidator) throws Exception {
@@ -396,7 +391,7 @@ public abstract class AbstractMercuryConnection extends Task {
             File tempFile = null;
             var success = false;
             try {
-                tempFile = runContext.workingDir().createTempFile(".pdf").toFile();
+                tempFile = runContext.workingDir().createTempFile(".tmp").toFile();
                 var capturedContentDisposition = new AtomicReference<String>();
                 final var fileToWrite = tempFile;
 
@@ -455,7 +450,7 @@ public abstract class AbstractMercuryConnection extends Task {
                     throw e;
                 } catch (Exception e) {
                     throw new IllegalStateException(
-                        "Failed to download statement PDF from Mercury: %s. Retry the task.".formatted(e.getMessage()), e
+                        "Failed to download file from Mercury: %s. Retry the task.".formatted(e.getMessage()), e
                     );
                 }
             } finally {

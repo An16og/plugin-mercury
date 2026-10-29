@@ -192,8 +192,8 @@ class DownloadTest {
         assertThat(afterCount, is(beforeCount));
 
         try (var stream = Files.list(runContext.workingDir().path())) {
-            var tempPdfFiles = stream.filter(p -> p.toString().endsWith(".pdf")).count();
-            assertThat(tempPdfFiles, is(0L));
+            var tempFiles = stream.filter(Files::isRegularFile).count();
+            assertThat(tempFiles, is(0L));
         }
     }
 
@@ -228,8 +228,8 @@ class DownloadTest {
         assertThat(afterCount, is(beforeCount));
 
         try (var stream = Files.list(runContext.workingDir().path())) {
-            var tempPdfFiles = stream.filter(p -> p.toString().endsWith(".pdf")).count();
-            assertThat(tempPdfFiles, is(0L));
+            var tempFiles = stream.filter(Files::isRegularFile).count();
+            assertThat(tempFiles, is(0L));
         }
     }
 
@@ -253,7 +253,7 @@ class DownloadTest {
 
         var runContext = runContextFactory.of();
         var ex = assertThrows(IllegalStateException.class, () -> task.run(runContext));
-        assertThat(ex.getMessage(), containsString("Failed to download statement PDF from Mercury:"));
+        assertThat(ex.getMessage(), containsString("Failed to download file from Mercury:"));
         assertThat(ex.getMessage(), containsString("Retry the task."));
         assertThat(ex.getCause(), notNullValue());
     }

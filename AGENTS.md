@@ -4,7 +4,6 @@
 
 - Provides plugin components under `io.kestra.plugin.mercury`.
 - Includes tasks under `io.kestra.plugin.mercury.accounts` (`List`, `Get`), `io.kestra.plugin.mercury.transactions` (`List`, `Get`), `io.kestra.plugin.mercury.recipients` (`List`), `io.kestra.plugin.mercury.cards` (`List`), and `io.kestra.plugin.mercury.statements` (`List`, `Download`).
-- Includes tasks under `io.kestra.plugin.mercury.accounts` (`List`, `Get`), `io.kestra.plugin.mercury.transactions` (`List`, `Get`), `io.kestra.plugin.mercury.recipients` (`List`), and `io.kestra.plugin.mercury.cards` (`List`).
 
 ## Why
 

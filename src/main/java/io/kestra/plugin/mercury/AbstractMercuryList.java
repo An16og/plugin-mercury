@@ -42,6 +42,11 @@ public abstract class AbstractMercuryList extends AbstractMercuryConnection {
     )
     @PluginProperty(group = "processing")
     private Property<Order> order;
+            Sort order of the returned records. Allowed values: ASC or DESC. Default is ASC."""
+    )
+    @PluginProperty(group = "processing")
+    @Builder.Default
+    private Property<Order> order = Property.ofValue(Order.ASC);
 
     @Schema(
         title = "Maximum pages to retrieve",
@@ -73,6 +78,7 @@ public abstract class AbstractMercuryList extends AbstractMercuryConnection {
         }
 
         var rOrder = runContext.render(this.order).as(Order.class).orElse(defaultOrder());
+        var rOrder = runContext.render(this.order).as(Order.class).orElse(Order.ASC);
         var fetchOne = rFetchType == FetchType.FETCH_ONE;
         return new ListParams(rFetchType, fetchOne ? 1 : rLimit, fetchOne ? 1 : rPageCap, rOrder);
     }

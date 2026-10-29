@@ -27,8 +27,10 @@ import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
 import org.apache.hc.core5.http.message.BasicHeader;
 
 import java.io.BufferedOutputStream;
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -97,6 +99,8 @@ public abstract class AbstractMercuryConnection extends Task {
         OffsetPageResult<T> fetch(int offset) throws Exception;
     }
 
+    public record BinaryResponse(URI uri, long size, String contentType, String contentDisposition) {}
+
     protected HttpClient createClient(RunContext runContext) throws Exception {
         var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
         validateBaseUrl(rBaseUrl);
@@ -140,6 +144,20 @@ public abstract class AbstractMercuryConnection extends Task {
             .build();
 
         return executeWithRetry(client, runContext, request, typeRef);
+    }
+
+    protected BinaryResponse downloadBinary(HttpClient client, RunContext runContext, String path,
+                                            Map<String, Object> queryParams) throws Exception {
+        var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
+        validateBaseUrl(rBaseUrl);
+
+        var uri = buildUri(rBaseUrl, path, queryParams);
+        var request = HttpRequest.builder()
+            .method("GET")
+            .uri(uri)
+            .build();
+
+        return executeDownloadWithRetry(client, runContext, request);
     }
 
     protected <T> int paginate(RunContext runContext, int pageCap, String entityName,
@@ -333,6 +351,99 @@ public abstract class AbstractMercuryConnection extends Task {
                 throw mapError(status, e);
             } catch (HttpClientException e) {
                 throw mapError(0, e);
+            }
+        }
+        throw new IllegalStateException(
+            "Rate limited (429): Too many requests to Mercury API. All retry attempts exhausted. Try again later.");
+    }
+
+    private BinaryResponse executeDownloadWithRetry(HttpClient client, RunContext runContext,
+                                                    HttpRequest request) throws Exception {
+        var logger = runContext.logger();
+        var backoffMs = INITIAL_BACKOFF_MS;
+
+        for (var attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+            File tempFile = null;
+            try {
+                tempFile = runContext.workingDir().createTempFile(".pdf").toFile();
+                var capturedContentType = new AtomicReference<String>();
+                var capturedContentDisposition = new AtomicReference<String>();
+
+                final var fileToWrite = tempFile;
+                var response = client.request(request, (HttpResponse<InputStream> httpResponse) -> {
+                    var statusCode = httpResponse.getStatus() != null ? httpResponse.getStatus().getCode() : 200;
+                    if (statusCode >= 300) {
+                        throw new RuntimeException(mapError(statusCode, new HttpClientResponseException("HTTP " + statusCode, httpResponse)));
+                    }
+
+                    var headers = httpResponse.getHeaders();
+                    if (headers != null) {
+                        headers.firstValue("Content-Type").ifPresent(capturedContentType::set);
+                        headers.firstValue("Content-Disposition").ifPresent(capturedContentDisposition::set);
+                    }
+                    if (capturedContentType.get() == null && httpResponse.contentType() != null) {
+                        capturedContentType.set(httpResponse.contentType());
+                    }
+
+                    try (var in = httpResponse.getBody();
+                         var out = new BufferedOutputStream(new FileOutputStream(fileToWrite))) {
+                        if (in != null) {
+                            in.transferTo(out);
+                        }
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to stream binary response to temporary file", e);
+                    }
+                });
+
+                var statusCode = response.getStatus() != null ? response.getStatus().getCode() : 200;
+                if (statusCode >= 300) {
+                    throw mapError(statusCode, new HttpClientResponseException("HTTP " + statusCode, response));
+                }
+
+                var size = tempFile.length();
+                var storageUri = runContext.storage().putFile(tempFile);
+                return new BinaryResponse(storageUri, size, capturedContentType.get(), capturedContentDisposition.get());
+            } catch (HttpClientResponseException e) {
+                if (tempFile != null && tempFile.exists()) {
+                    tempFile.delete();
+                }
+                var status = extractStatusCode(e);
+                if (status == 429 && attempt < MAX_RETRY_ATTEMPTS) {
+                    var waitMs = extractRetryAfterMs(runContext, e, backoffMs);
+                    if (waitMs > MAX_BACKOFF_MS) {
+                        logger.warn("Retry-After wait of {}ms exceeds max backoff cap of {}ms; failing request", waitMs, MAX_BACKOFF_MS);
+                        throw new IllegalStateException(
+                            "Rate limited (429): Mercury asked to wait " + waitMs + " ms (Retry-After), above the " + MAX_BACKOFF_MS + " ms cap. Try again later.", e);
+                    }
+                    logger.warn("Rate limited (429), retry {}/{} after {}ms", attempt, MAX_RETRY_ATTEMPTS, waitMs);
+                    try {
+                        Thread.sleep(waitMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Interrupted during rate limit backoff", ie);
+                    }
+                    backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+                    continue;
+                }
+                throw mapError(status, e);
+            } catch (HttpClientException e) {
+                if (tempFile != null && tempFile.exists()) {
+                    tempFile.delete();
+                }
+                throw mapError(0, e);
+            } catch (RuntimeException e) {
+                if (tempFile != null && tempFile.exists()) {
+                    tempFile.delete();
+                }
+                if (e.getCause() instanceof Exception ex) {
+                    throw ex;
+                }
+                throw e;
+            } catch (Exception e) {
+                if (tempFile != null && tempFile.exists()) {
+                    tempFile.delete();
+                }
+                throw e;
             }
         }
         throw new IllegalStateException(

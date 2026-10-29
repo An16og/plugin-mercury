@@ -93,3 +93,29 @@ Retrieve credit and debit cards across an organization from Mercury with automat
   - `status` (options: `ACTIVE`, `FROZEN`, `CANCELLED`, `INACTIVE`, `EXPIRED`, `SUSPENDED`)
   - `cardType` (options: `VIRTUAL`, `PHYSICAL`)
   - `userId`
+
+### `io.kestra.plugin.mercury.statements.List`
+
+Retrieve statements for a specific Mercury depository bank account with automatic cursor-based pagination and filtering. Output records contain sensitive banking information such as account and routing numbers, EINs, legal addresses, and document download URLs.
+
+- **Required fields:**
+  - `accountId` (UUID)
+  - `apiToken`
+- **Optional fields:**
+  - `baseUrl` (default: `https://api.mercury.com/api/v1`)
+  - `end` (date format: `YYYY-MM-DD`; filter on period start date; max 3-month range between start and end)
+  - `fetchType` (default: `FETCH`; options: `FETCH`, `FETCH_ONE`, `STORE`, `NONE`)
+  - `limit` (default: `1000`, min: `1`, max: `1000`)
+  - `order` (default: `DESC`; options: `ASC`, `DESC`)
+  - `pageCap` (default: `100`, min: `1`)
+  - `start` (date format: `YYYY-MM-DD`; filter on period start date; max 3-month range between start and end)
+
+### `io.kestra.plugin.mercury.statements.Download`
+
+Download an official statement PDF for a Mercury depository bank account directly to internal storage. Returns the internal storage URI, file size in bytes, MIME content type, and sanitized file name. Never logs statement details.
+
+- **Required fields:**
+  - `apiToken`
+  - `statementId` (UUID)
+- **Optional fields:**
+  - `baseUrl` (default: `https://api.mercury.com/api/v1`)

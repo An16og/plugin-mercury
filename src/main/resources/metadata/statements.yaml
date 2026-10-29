@@ -1,0 +1,8 @@
+group: io.kestra.plugin.mercury.statements
+name: "statements"
+title: "Statements"
+description: "Tasks for listing and downloading Mercury account statements."
+body: "Query and download monthly PDF account statements from Mercury depository bank accounts within Kestra workflows."
+videos: []
+createdBy: "Kestra Core Team"
+managedBy: "Kestra Core Team"

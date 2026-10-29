@@ -112,7 +112,7 @@ Retrieve statements for a specific Mercury depository bank account with automati
 
 ### `io.kestra.plugin.mercury.statements.Download`
 
-Download an official statement PDF for a Mercury depository bank account directly to internal storage. Returns the internal storage URI, file size in bytes, MIME content type, and sanitized file name. Never logs statement details.
+Download an official statement PDF for a Mercury depository bank account directly to internal storage. Returns the internal storage URI, file size in bytes, and sanitized file name. Never logs statement details.
 
 - **Required fields:**
   - `apiToken`

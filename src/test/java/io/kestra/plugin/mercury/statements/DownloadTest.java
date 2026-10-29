@@ -2,6 +2,8 @@ package io.kestra.plugin.mercury.statements;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.http.Fault;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import io.kestra.core.junit.annotations.KestraTest;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.flows.Flow;
@@ -9,13 +11,16 @@ import io.kestra.core.models.property.Property;
 import io.kestra.core.models.validations.ModelValidator;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.YamlParser;
+import io.kestra.core.storages.StorageInterface;
+import io.kestra.storage.local.LocalStorage;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
-import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
@@ -36,6 +41,9 @@ class DownloadTest {
     @Inject
     private ModelValidator modelValidator;
 
+    @Inject
+    private StorageInterface storageInterface;
+
     private WireMockServer wireMockServer;
 
     @BeforeEach
@@ -53,13 +61,12 @@ class DownloadTest {
 
     @Test
     void testDownloadBinaryWithNonUtf8BytesIdenticalStorage() throws Exception {
-        var path = "/statements/" + STATEMENT_ID + "/pdf";
+        var path = "/statements/%s/pdf".formatted(STATEMENT_ID);
 
-        // Construct binary body containing bytes invalid in UTF-8 (0x80-0xFF, 0x00, 0xC0) starting with %PDF-1.4
-        var header = "%PDF-1.4\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        var header = "%PDF-1.4\n".getBytes(StandardCharsets.US_ASCII);
         var binaryPayload = new byte[header.length + 256];
         System.arraycopy(header, 0, binaryPayload, 0, header.length);
-        for (int i = 0; i < 256; i++) {
+        for (var i = 0; i < 256; i++) {
             binaryPayload[header.length + i] = (byte) i;
         }
 
@@ -84,7 +91,6 @@ class DownloadTest {
         var output = task.run(runContext);
 
         assertThat(output.getSize(), is((long) binaryPayload.length));
-        assertThat(output.getContentType(), is("application/pdf"));
         assertThat(output.getFileName(), is("statement-2024-01.pdf"));
         assertThat(output.getUri(), notNullValue());
 
@@ -97,25 +103,21 @@ class DownloadTest {
 
     @Test
     void testFileNameParsingTable() {
-        // Plain
         assertThat(
             Download.parseFileName("attachment; filename=statement.pdf", STATEMENT_ID),
             is("statement.pdf")
         );
 
-        // Quoted
         assertThat(
             Download.parseFileName("attachment; filename=\"statement 2024.pdf\"", STATEMENT_ID),
             is("statement 2024.pdf")
         );
 
-        // RFC 5987 filename* precedence
         assertThat(
             Download.parseFileName("attachment; filename=\"fallback.pdf\"; filename*=UTF-8''statement%202024.pdf", STATEMENT_ID),
             is("statement 2024.pdf")
         );
 
-        // Path traversal stripped
         assertThat(
             Download.parseFileName("attachment; filename=\"../../evil/path/statement.pdf\"", STATEMENT_ID),
             is("statement.pdf")
@@ -125,39 +127,34 @@ class DownloadTest {
             is("statement.pdf")
         );
 
-        // Missing header falls back to statement-<id>.pdf
         assertThat(
             Download.parseFileName(null, STATEMENT_ID),
-            is("statement-" + STATEMENT_ID + ".pdf")
+            is("statement-%s.pdf".formatted(STATEMENT_ID))
         );
         assertThat(
             Download.parseFileName("", STATEMENT_ID),
-            is("statement-" + STATEMENT_ID + ".pdf")
+            is("statement-%s.pdf".formatted(STATEMENT_ID))
         );
         assertThat(
             Download.parseFileName("attachment", STATEMENT_ID),
-            is("statement-" + STATEMENT_ID + ".pdf")
+            is("statement-%s.pdf".formatted(STATEMENT_ID))
         );
 
-        // Non-ASCII in filename*
         assertThat(
             Download.parseFileName("attachment; filename*=UTF-8''%C3%A9t%C3%A9%202024.pdf", STATEMENT_ID),
             is("été 2024.pdf")
         );
 
-        // Name without .pdf extension gets .pdf appended
         assertThat(
             Download.parseFileName("attachment; filename=monthly-statement", STATEMENT_ID),
             is("monthly-statement.pdf")
         );
 
-        // Over-long capped to 255 chars and ends with .pdf
-        var longName = "a".repeat(300) + ".pdf";
-        var parsedLong = Download.parseFileName("attachment; filename=\"" + longName + "\"", STATEMENT_ID);
+        var longName = "%s.pdf".formatted("a".repeat(300));
+        var parsedLong = Download.parseFileName("attachment; filename=\"%s\"".formatted(longName), STATEMENT_ID);
         assertThat(parsedLong.length(), is(255));
         assertThat(parsedLong.endsWith(".pdf"), is(true));
 
-        // Control characters stripped
         assertThat(
             Download.parseFileName("attachment; filename=\"stat\u0000e\u001Fment.pdf\"", STATEMENT_ID),
             is("statement.pdf")
@@ -165,8 +162,8 @@ class DownloadTest {
     }
 
     @Test
-    void testNonPdfContentTypeFails() {
-        var path = "/statements/" + STATEMENT_ID + "/pdf";
+    void testNonPdfContentTypeFailsNothingReachesStorage() throws Exception {
+        var path = "/statements/%s/pdf".formatted(STATEMENT_ID);
 
         stubGetBinary(
             wireMockServer,
@@ -174,7 +171,7 @@ class DownloadTest {
             200,
             "text/html; charset=UTF-8",
             "attachment; filename=\"statement.pdf\"",
-            "<html><body>Error</body></html>".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            "<html><body>Error</body></html>".getBytes(StandardCharsets.UTF_8)
         );
 
         var task = Download.builder()
@@ -186,13 +183,23 @@ class DownloadTest {
             .build();
 
         var runContext = runContextFactory.of();
+        var beforeCount = countStoredFiles();
+
         var ex = assertThrows(IllegalStateException.class, () -> task.run(runContext));
         assertThat(ex.getMessage(), containsString("Expected Content-Type 'application/pdf' but received 'text/html; charset=UTF-8'"));
+
+        var afterCount = countStoredFiles();
+        assertThat(afterCount, is(beforeCount));
+
+        try (var stream = Files.list(runContext.workingDir().path())) {
+            var tempPdfFiles = stream.filter(p -> p.toString().endsWith(".pdf")).count();
+            assertThat(tempPdfFiles, is(0L));
+        }
     }
 
     @Test
-    void testEmptyBodyFails() {
-        var path = "/statements/" + STATEMENT_ID + "/pdf";
+    void testEmptyBodyFailsNothingReachesStorage() throws Exception {
+        var path = "/statements/%s/pdf".formatted(STATEMENT_ID);
 
         stubGetBinary(
             wireMockServer,
@@ -212,13 +219,48 @@ class DownloadTest {
             .build();
 
         var runContext = runContextFactory.of();
+        var beforeCount = countStoredFiles();
+
         var ex = assertThrows(IllegalStateException.class, () -> task.run(runContext));
-        assertThat(ex.getMessage(), containsString("Statement PDF response body is empty for statementId '" + STATEMENT_ID + "'"));
+        assertThat(ex.getMessage(), containsString("Statement PDF response body is empty for statementId '%s'".formatted(STATEMENT_ID)));
+
+        var afterCount = countStoredFiles();
+        assertThat(afterCount, is(beforeCount));
+
+        try (var stream = Files.list(runContext.workingDir().path())) {
+            var tempPdfFiles = stream.filter(p -> p.toString().endsWith(".pdf")).count();
+            assertThat(tempPdfFiles, is(0L));
+        }
+    }
+
+    @Test
+    void testConnectionResetMidBodyFailsWithMercuryRetryMessage() {
+        var path = "/statements/%s/pdf".formatted(STATEMENT_ID);
+
+        wireMockServer.stubFor(get(urlPathEqualTo(path))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/pdf")
+                .withFault(Fault.CONNECTION_RESET_BY_PEER)));
+
+        var task = Download.builder()
+            .id(UUID.randomUUID().toString())
+            .type(Download.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .statementId(Property.ofValue(STATEMENT_ID))
+            .build();
+
+        var runContext = runContextFactory.of();
+        var ex = assertThrows(IllegalStateException.class, () -> task.run(runContext));
+        assertThat(ex.getMessage(), containsString("Failed to download statement PDF from Mercury:"));
+        assertThat(ex.getMessage(), containsString("Retry the task."));
+        assertThat(ex.getCause(), notNullValue());
     }
 
     @Test
     void testHttp404Fails() {
-        var path = "/statements/" + STATEMENT_ID + "/pdf";
+        var path = "/statements/%s/pdf".formatted(STATEMENT_ID);
 
         wireMockServer.stubFor(get(urlPathEqualTo(path))
             .willReturn(aResponse()
@@ -241,7 +283,7 @@ class DownloadTest {
 
     @Test
     void testHttp401Fails() {
-        var path = "/statements/" + STATEMENT_ID + "/pdf";
+        var path = "/statements/%s/pdf".formatted(STATEMENT_ID);
 
         wireMockServer.stubFor(get(urlPathEqualTo(path))
             .willReturn(aResponse()
@@ -264,12 +306,12 @@ class DownloadTest {
 
     @Test
     void testHttp429RetryThenSuccess() throws Exception {
-        var path = "/statements/" + STATEMENT_ID + "/pdf";
-        var pdfBytes = "%PDF-1.4 test binary data".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var path = "/statements/%s/pdf".formatted(STATEMENT_ID);
+        var pdfBytes = "%PDF-1.4 test binary data".getBytes(StandardCharsets.UTF_8);
 
         wireMockServer.stubFor(get(urlPathEqualTo(path))
             .inScenario("429-retry")
-            .whenScenarioStateIs(com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED)
+            .whenScenarioStateIs(Scenario.STARTED)
             .willReturn(aResponse()
                 .withStatus(429)
                 .withHeader("Retry-After", "0")
@@ -301,8 +343,8 @@ class DownloadTest {
 
     @Test
     void testHttp3xxRedirectRejectedWithoutCallingTarget() {
-        var path = "/statements/" + STATEMENT_ID + "/pdf";
-        var redirectLocation = wireMockServer.baseUrl() + "/external-leak-target";
+        var path = "/statements/%s/pdf".formatted(STATEMENT_ID);
+        var redirectLocation = "%s/external-leak-target".formatted(wireMockServer.baseUrl());
 
         wireMockServer.stubFor(get(urlPathEqualTo(path))
             .willReturn(aResponse()
@@ -388,5 +430,17 @@ class DownloadTest {
             var flow = YamlParser.parse(code, Flow.class);
             assertThat(modelValidator.isValid(flow).isEmpty(), is(true));
         }
+    }
+
+    private long countStoredFiles() throws Exception {
+        if (storageInterface instanceof LocalStorage localStorage) {
+            var basePath = localStorage.getBasePath();
+            if (basePath != null && Files.exists(basePath)) {
+                try (var stream = Files.walk(basePath)) {
+                    return stream.filter(Files::isRegularFile).count();
+                }
+            }
+        }
+        return 0;
     }
 }

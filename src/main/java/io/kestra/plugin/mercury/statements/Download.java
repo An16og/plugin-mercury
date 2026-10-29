@@ -93,31 +93,44 @@ public class Download extends AbstractMercuryConnection implements RunnableTask<
 
     @Override
     public Output run(RunContext runContext) throws Exception {
-        var rStatementId = runContext.render(this.statementId).as(String.class)
-            .orElseThrow(() -> new IllegalArgumentException("statementId is required"));
-        var statementId = requireUuid(rStatementId, "statementId");
+        var rStatementId = requireUuid(
+            runContext.render(this.statementId).as(String.class)
+                .orElseThrow(() -> new IllegalArgumentException("statementId is required")),
+            "statementId"
+        );
 
         try (var client = createClient(runContext)) {
-            var binary = downloadBinary(client, runContext, "/statements/" + statementId + "/pdf", null);
+            var binary = downloadBinary(
+                client,
+                runContext,
+                "/statements/%s/pdf".formatted(rStatementId),
+                null,
+                httpResponse -> {
+                    var contentType = httpResponse.contentType();
+                    if (contentType == null && httpResponse.getHeaders() != null) {
+                        contentType = httpResponse.getHeaders().firstValue("Content-Type").orElse(null);
+                    }
+                    if (!isPdfContentType(contentType)) {
+                        throw new IllegalStateException(
+                            "Expected Content-Type 'application/pdf' but received '%s' for statementId '%s'"
+                                .formatted(contentType != null ? contentType : "none", rStatementId)
+                        );
+                    }
+                },
+                size -> {
+                    if (size == 0) {
+                        throw new IllegalStateException(
+                            "Statement PDF response body is empty for statementId '%s'".formatted(rStatementId)
+                        );
+                    }
+                }
+            );
 
-            if (binary.size() == 0) {
-                throw new IllegalStateException("Statement PDF response body is empty for statementId '%s'".formatted(statementId));
-            }
-
-            var contentType = binary.contentType();
-            if (!isPdfContentType(contentType)) {
-                throw new IllegalStateException(
-                    "Expected Content-Type 'application/pdf' but received '%s' for statementId '%s'"
-                        .formatted(contentType != null ? contentType : "none", statementId)
-                );
-            }
-
-            var fileName = parseFileName(binary.contentDisposition(), statementId);
+            var fileName = parseFileName(binary.contentDisposition(), rStatementId);
 
             return Output.builder()
                 .uri(binary.uri())
                 .size(binary.size())
-                .contentType(contentType)
                 .fileName(fileName)
                 .build();
         }
@@ -150,7 +163,6 @@ public class Download extends AbstractMercuryConnection implements RunnableTask<
                     var charset = charsetName.isEmpty() ? StandardCharsets.UTF_8 : Charset.forName(charsetName);
                     candidate = URLDecoder.decode(encoded, charset);
                 } catch (Exception ignored) {
-                    // fall through to standard filename attribute
                 }
             }
         }
@@ -171,41 +183,45 @@ public class Download extends AbstractMercuryConnection implements RunnableTask<
             return defaultName;
         }
 
-        // Keep only the last path segment (handling both / and \)
-        var lastSlash = Math.max(candidate.lastIndexOf('/'), candidate.lastIndexOf('\\'));
-        if (lastSlash >= 0) {
-            candidate = candidate.substring(lastSlash + 1);
-        }
+        var segment = lastPathSegment(candidate);
+        var sanitized = sanitizeFileName(segment);
 
-        // Strip path separators, quotes, and control characters
-        candidate = candidate.replaceAll("[\"'/\\\\]", "");
-        candidate = candidate.replaceAll("\\p{Cntrl}", "");
-
-        // Strip ".."
-        candidate = candidate.replace("..", "");
-        candidate = candidate.trim();
-
-        if (candidate.isEmpty() || candidate.equalsIgnoreCase(".pdf") || candidate.equals(".")) {
+        if (sanitized.isEmpty() || sanitized.equalsIgnoreCase(".pdf") || sanitized.equals(".")) {
             return defaultName;
         }
 
-        // Ensure .pdf extension and cap length
-        if (!candidate.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
-            if (candidate.length() > MAX_FILE_NAME_LENGTH - 4) {
-                candidate = candidate.substring(0, MAX_FILE_NAME_LENGTH - 4);
-            }
-            candidate = candidate + ".pdf";
-        } else {
-            if (candidate.length() > MAX_FILE_NAME_LENGTH) {
-                var base = candidate.substring(0, candidate.length() - 4);
-                if (base.length() > MAX_FILE_NAME_LENGTH - 4) {
-                    base = base.substring(0, MAX_FILE_NAME_LENGTH - 4);
-                }
-                candidate = base + ".pdf";
-            }
+        return ensurePdfExtension(sanitized);
+    }
+
+    private static String lastPathSegment(String path) {
+        var lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
+    }
+
+    private static String sanitizeFileName(String name) {
+        var clean = name.replaceAll("[\"'/\\\\]", "");
+        clean = clean.replaceAll("\\p{Cntrl}", "");
+        clean = clean.replace("..", "");
+        return clean.trim();
+    }
+
+    private static String ensurePdfExtension(String name) {
+        if (!name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
+            var base = name.length() > MAX_FILE_NAME_LENGTH - 4
+                ? name.substring(0, MAX_FILE_NAME_LENGTH - 4)
+                : name;
+            return base + ".pdf";
         }
 
-        return candidate;
+        if (name.length() > MAX_FILE_NAME_LENGTH) {
+            var base = name.substring(0, name.length() - 4);
+            if (base.length() > MAX_FILE_NAME_LENGTH - 4) {
+                base = base.substring(0, MAX_FILE_NAME_LENGTH - 4);
+            }
+            return base + ".pdf";
+        }
+
+        return name;
     }
 
     @Builder
@@ -225,13 +241,6 @@ public class Download extends AbstractMercuryConnection implements RunnableTask<
                 The size of the downloaded statement PDF file in bytes."""
         )
         private final Long size;
-
-        @Schema(
-            title = "Content type",
-            description = """
-                The MIME content type header returned by the server, such as 'application/pdf'."""
-        )
-        private final String contentType;
 
         @Schema(
             title = "File name",

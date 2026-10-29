@@ -38,11 +38,10 @@ public abstract class AbstractMercuryList extends AbstractMercuryConnection {
     @Schema(
         title = "Sort order",
         description = """
-            Sort order of the returned records. Allowed values: ASC or DESC. Default is ASC."""
+            Sort order of the returned records. Allowed values: ASC or DESC. Defaults to ASC for accounts, cards, and recipients; defaults to DESC for statements."""
     )
     @PluginProperty(group = "processing")
-    @Builder.Default
-    private Property<Order> order = Property.ofValue(Order.ASC);
+    private Property<Order> order;
 
     @Schema(
         title = "Maximum pages to retrieve",
@@ -54,6 +53,10 @@ public abstract class AbstractMercuryList extends AbstractMercuryConnection {
     private Property<@Min(1) Integer> pageCap = Property.ofValue(DEFAULT_MAX_PAGE_CAP);
 
     protected record ListParams(FetchType fetchType, int limit, int pageCap, Order order) {
+    }
+
+    protected Order defaultOrder() {
+        return Order.ASC;
     }
 
     // FETCH_ONE asks for a single record on a single page.
@@ -69,7 +72,7 @@ public abstract class AbstractMercuryList extends AbstractMercuryConnection {
             throw new IllegalArgumentException("pageCap must be at least 1, got: %d".formatted(rPageCap));
         }
 
-        var rOrder = runContext.render(this.order).as(Order.class).orElse(Order.ASC);
+        var rOrder = runContext.render(this.order).as(Order.class).orElse(defaultOrder());
         var fetchOne = rFetchType == FetchType.FETCH_ONE;
         return new ListParams(rFetchType, fetchOne ? 1 : rLimit, fetchOne ? 1 : rPageCap, rOrder);
     }

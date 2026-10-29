@@ -112,15 +112,6 @@ public class List extends AbstractMercuryList implements RunnableTask<List.Outpu
     private Property<@Min(1) @Max(1000) Integer> limit = Property.ofValue(1000);
 
     @Schema(
-        title = "Sort order",
-        description = """
-            Sort order of the returned records. Allowed values: ASC or DESC. Default is DESC."""
-    )
-    @PluginProperty(group = "processing")
-    @Builder.Default
-    private Property<Order> order = Property.ofValue(Order.DESC);
-
-    @Schema(
         title = "Start date filter",
         description = """
             Earliest date to filter statements by period start date. Format: YYYY-MM-DD. Mercury enforces a maximum range of 3 months between start and end."""
@@ -137,13 +128,19 @@ public class List extends AbstractMercuryList implements RunnableTask<List.Outpu
     private Property<String> end;
 
     @Override
+    protected Order defaultOrder() {
+        return Order.DESC;
+    }
+
+    @Override
     public Output run(RunContext runContext) throws Exception {
-        var rAccountId = runContext.render(this.accountId).as(String.class)
-            .orElseThrow(() -> new IllegalArgumentException("accountId is required"));
-        var accountId = requireUuid(rAccountId, "accountId");
+        var rAccountId = requireUuid(
+            runContext.render(this.accountId).as(String.class)
+                .orElseThrow(() -> new IllegalArgumentException("accountId is required")),
+            "accountId"
+        );
 
         var params = listParams(runContext, this.limit, 1000);
-        var rOrder = runContext.render(this.order).as(Order.class).orElse(Order.DESC);
 
         var rStart = runContext.render(this.start).as(String.class).orElse(null);
         if (rStart != null && !rStart.isBlank()) {
@@ -157,7 +154,7 @@ public class List extends AbstractMercuryList implements RunnableTask<List.Outpu
 
         var baseParams = new HashMap<String, Object>();
         baseParams.put("limit", params.limit());
-        baseParams.put("order", rOrder.name().toLowerCase(Locale.ROOT));
+        baseParams.put("order", params.order().name().toLowerCase(Locale.ROOT));
         if (rStart != null && !rStart.isBlank()) {
             baseParams.put("start", rStart.trim());
         }
@@ -175,7 +172,7 @@ public class List extends AbstractMercuryList implements RunnableTask<List.Outpu
                 var response = request(
                     client,
                     runContext,
-                    "/account/" + accountId + "/statements",
+                    "/account/%s/statements".formatted(rAccountId),
                     queryParams,
                     STATEMENTS_RESPONSE_TYPE_REF
                 );

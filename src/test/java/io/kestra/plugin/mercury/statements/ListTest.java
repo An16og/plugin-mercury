@@ -12,13 +12,11 @@ import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.FileSerde;
 import io.kestra.core.serializers.YamlParser;
 import io.kestra.plugin.mercury.AbstractMercuryList;
-import io.kestra.plugin.mercury.model.Statement;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;
@@ -273,7 +271,7 @@ class ListTest {
         assertThat(output.getRow(), nullValue());
         assertThat(output.getUri(), notNullValue());
 
-        try (InputStream is = runContext.storage().getFile(output.getUri())) {
+        try (var is = runContext.storage().getFile(output.getUri())) {
             var records = FileSerde.readAll(is).collectList().block();
             assertThat(records, notNullValue());
             assertThat(records, hasSize(1));

@@ -18,9 +18,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
@@ -93,8 +93,9 @@ class DownloadTest {
         assertThat(output.getSize(), is((long) binaryPayload.length));
         assertThat(output.getFileName(), is("statement-2024-01.pdf"));
         assertThat(output.getUri(), notNullValue());
+        assertThat(output.getUri().getPath(), endsWith(".pdf"));
 
-        try (InputStream is = runContext.storage().getFile(output.getUri())) {
+        try (var is = runContext.storage().getFile(output.getUri())) {
             var storedBytes = is.readAllBytes();
             assertThat(storedBytes.length, is(binaryPayload.length));
             assertArrayEquals(binaryPayload, storedBytes);
@@ -430,6 +431,15 @@ class DownloadTest {
             var flow = YamlParser.parse(code, Flow.class);
             assertThat(modelValidator.isValid(flow).isEmpty(), is(true));
         }
+    }
+
+    @Test
+    void testForEachPebbleRendering() throws Exception {
+        var runContext = runContextFactory.of(Map.of(
+            "taskrun", Map.of("value", "{\"id\": \"%s\"}".formatted(STATEMENT_ID))
+        ));
+        var rendered = runContext.render("{{ fromJson(taskrun.value).id }}");
+        assertThat(rendered, is(STATEMENT_ID));
     }
 
     private long countStoredFiles() throws Exception {

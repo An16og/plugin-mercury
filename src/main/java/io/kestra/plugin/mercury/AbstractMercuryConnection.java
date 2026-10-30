@@ -150,6 +150,7 @@ public abstract class AbstractMercuryConnection extends Task {
 
     protected BinaryResponse downloadBinary(HttpClient client, RunContext runContext, String path,
                                             Map<String, Object> queryParams,
+                                            String fileExtension,
                                             Consumer<HttpResponse<InputStream>> responseValidator,
                                             Consumer<Long> sizeValidator) throws Exception {
         var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
@@ -161,7 +162,7 @@ public abstract class AbstractMercuryConnection extends Task {
             .uri(uri)
             .build();
 
-        return executeDownloadWithRetry(client, runContext, request, responseValidator, sizeValidator);
+        return executeDownloadWithRetry(client, runContext, request, fileExtension, responseValidator, sizeValidator);
     }
 
     protected <T> int paginate(RunContext runContext, int pageCap, String entityName,
@@ -385,13 +386,17 @@ public abstract class AbstractMercuryConnection extends Task {
 
     private BinaryResponse executeDownloadWithRetry(HttpClient client, RunContext runContext,
                                                     HttpRequest request,
+                                                    String fileExtension,
                                                     Consumer<HttpResponse<InputStream>> responseValidator,
                                                     Consumer<Long> sizeValidator) throws Exception {
         return withRetry(runContext, () -> {
             File tempFile = null;
             var success = false;
             try {
-                tempFile = runContext.workingDir().createTempFile(".tmp").toFile();
+                var suffix = (fileExtension != null && !fileExtension.isBlank())
+                    ? (fileExtension.startsWith(".") ? fileExtension : "." + fileExtension)
+                    : ".tmp";
+                tempFile = runContext.workingDir().createTempFile(suffix).toFile();
                 var capturedContentDisposition = new AtomicReference<String>();
                 final var fileToWrite = tempFile;
 

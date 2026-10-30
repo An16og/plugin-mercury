@@ -70,7 +70,7 @@ import java.util.regex.Pattern;
                       - id: download_item
                         type: io.kestra.plugin.mercury.statements.Download
                         apiToken: "{{ secret('MERCURY_API_TOKEN') }}"
-                        statementId: "{{ taskrun.value.id }}"
+                        statementId: "{{ fromJson(taskrun.value).id }}"
                 """
         )
     }
@@ -105,6 +105,7 @@ public class Download extends AbstractMercuryConnection implements RunnableTask<
                 runContext,
                 "/statements/%s/pdf".formatted(rStatementId),
                 null,
+                ".pdf",
                 httpResponse -> {
                     var contentType = httpResponse.contentType();
                     if (contentType == null && httpResponse.getHeaders() != null) {

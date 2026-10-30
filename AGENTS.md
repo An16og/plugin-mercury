@@ -3,7 +3,7 @@
 ## What
 
 - Provides plugin components under `io.kestra.plugin.mercury`.
-- Includes tasks under `io.kestra.plugin.mercury.accounts` (`List`, `Get`), `io.kestra.plugin.mercury.transactions` (`List`, `Get`), `io.kestra.plugin.mercury.recipients` (`List`), and `io.kestra.plugin.mercury.cards` (`List`).
+- Includes tasks under `io.kestra.plugin.mercury.accounts` (`List`, `Get`), `io.kestra.plugin.mercury.transactions` (`List`, `Get`), `io.kestra.plugin.mercury.recipients` (`List`), `io.kestra.plugin.mercury.cards` (`List`), and `io.kestra.plugin.mercury.statements` (`List`, `Download`).
 
 ## Why
 
@@ -21,6 +21,7 @@ Single-module plugin. Source packages under `io.kestra.plugin`:
 - `mercury.accounts`
 - `mercury.cards`
 - `mercury.recipients`
+- `mercury.statements`
 - `mercury.transactions`
 - `mercury.model`
 
@@ -36,6 +37,8 @@ Infrastructure dependencies (Docker Compose services):
 - `io.kestra.plugin.mercury.accounts.Get`
 - `io.kestra.plugin.mercury.cards.List`
 - `io.kestra.plugin.mercury.recipients.List`
+- `io.kestra.plugin.mercury.statements.List`
+- `io.kestra.plugin.mercury.statements.Download`
 - `io.kestra.plugin.mercury.transactions.List`
 - `io.kestra.plugin.mercury.transactions.Get`
 
@@ -53,6 +56,9 @@ plugin-mercury/
 │   │   └── List.java
 │   ├── recipients/
 │   │   └── List.java
+│   ├── statements/
+│   │   ├── List.java
+│   │   └── Download.java
 │   ├── transactions/
 │   │   ├── List.java
 │   │   └── Get.java

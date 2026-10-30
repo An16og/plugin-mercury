@@ -27,8 +27,11 @@ import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
 import org.apache.hc.core5.http.message.BasicHeader;
 
 import java.io.BufferedOutputStream;
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -44,6 +47,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 @SuperBuilder
@@ -97,6 +101,8 @@ public abstract class AbstractMercuryConnection extends Task {
         OffsetPageResult<T> fetch(int offset) throws Exception;
     }
 
+    public record BinaryResponse(URI uri, long size, String contentDisposition) {}
+
     protected HttpClient createClient(RunContext runContext) throws Exception {
         var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
         validateBaseUrl(rBaseUrl);
@@ -140,6 +146,23 @@ public abstract class AbstractMercuryConnection extends Task {
             .build();
 
         return executeWithRetry(client, runContext, request, typeRef);
+    }
+
+    protected BinaryResponse downloadBinary(HttpClient client, RunContext runContext, String path,
+                                            Map<String, Object> queryParams,
+                                            String fileExtension,
+                                            Consumer<HttpResponse<InputStream>> responseValidator,
+                                            Consumer<Long> sizeValidator) throws Exception {
+        var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
+        validateBaseUrl(rBaseUrl);
+
+        var uri = buildUri(rBaseUrl, path, queryParams);
+        var request = HttpRequest.builder()
+            .method("GET")
+            .uri(uri)
+            .build();
+
+        return executeDownloadWithRetry(client, runContext, request, fileExtension, responseValidator, sizeValidator);
     }
 
     protected <T> int paginate(RunContext runContext, int pageCap, String entityName,
@@ -298,19 +321,29 @@ public abstract class AbstractMercuryConnection extends Task {
         }
     }
 
-    private <T> T executeWithRetry(HttpClient client, RunContext runContext,
-                                   HttpRequest request, TypeReference<T> typeRef) throws Exception {
+    @FunctionalInterface
+    private interface ThrowingSupplier<T> {
+        T get() throws Exception;
+    }
+
+    private static final class DownloadFailure extends RuntimeException {
+        private DownloadFailure(IllegalStateException cause) {
+            super(cause);
+        }
+
+        @Override
+        public synchronized IllegalStateException getCause() {
+            return (IllegalStateException) super.getCause();
+        }
+    }
+
+    private <T> T withRetry(RunContext runContext, ThrowingSupplier<T> action) throws Exception {
         var logger = runContext.logger();
         var backoffMs = INITIAL_BACKOFF_MS;
 
         for (var attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
             try {
-                var response = client.request(request, String.class);
-                var statusCode = response.getStatus() != null ? response.getStatus().getCode() : 200;
-                if (statusCode >= 300) {
-                    throw mapError(statusCode, new HttpClientResponseException("HTTP " + statusCode, response));
-                }
-                return parseBody(response.getBody(), typeRef);
+                return action.get();
             } catch (HttpClientResponseException e) {
                 var status = extractStatusCode(e);
                 if (status == 429 && attempt < MAX_RETRY_ATTEMPTS) {
@@ -337,6 +370,100 @@ public abstract class AbstractMercuryConnection extends Task {
         }
         throw new IllegalStateException(
             "Rate limited (429): Too many requests to Mercury API. All retry attempts exhausted. Try again later.");
+    }
+
+    private <T> T executeWithRetry(HttpClient client, RunContext runContext,
+                                   HttpRequest request, TypeReference<T> typeRef) throws Exception {
+        return withRetry(runContext, () -> {
+            var response = client.request(request, String.class);
+            var statusCode = response.getStatus() != null ? response.getStatus().getCode() : 200;
+            if (statusCode >= 300) {
+                throw mapError(statusCode, new HttpClientResponseException("HTTP " + statusCode, response));
+            }
+            return parseBody(response.getBody(), typeRef);
+        });
+    }
+
+    private BinaryResponse executeDownloadWithRetry(HttpClient client, RunContext runContext,
+                                                    HttpRequest request,
+                                                    String fileExtension,
+                                                    Consumer<HttpResponse<InputStream>> responseValidator,
+                                                    Consumer<Long> sizeValidator) throws Exception {
+        return withRetry(runContext, () -> {
+            File tempFile = null;
+            var success = false;
+            try {
+                var suffix = (fileExtension != null && !fileExtension.isBlank())
+                    ? (fileExtension.startsWith(".") ? fileExtension : "." + fileExtension)
+                    : ".tmp";
+                tempFile = runContext.workingDir().createTempFile(suffix).toFile();
+                var capturedContentDisposition = new AtomicReference<String>();
+                final var fileToWrite = tempFile;
+
+                try {
+                    var response = client.request(request, (HttpResponse<InputStream> httpResponse) -> {
+                        var statusCode = httpResponse.getStatus() != null ? httpResponse.getStatus().getCode() : 200;
+                        if (statusCode >= 300) {
+                            throw new DownloadFailure((IllegalStateException) mapError(
+                                statusCode, new HttpClientResponseException("HTTP " + statusCode, httpResponse)
+                            ));
+                        }
+
+                        if (responseValidator != null) {
+                            try {
+                                responseValidator.accept(httpResponse);
+                            } catch (IllegalStateException e) {
+                                throw new DownloadFailure(e);
+                            }
+                        }
+
+                        var headers = httpResponse.getHeaders();
+                        if (headers != null) {
+                            headers.firstValue("Content-Disposition").ifPresent(capturedContentDisposition::set);
+                        }
+
+                        try (var in = httpResponse.getBody();
+                             var out = new BufferedOutputStream(new FileOutputStream(fileToWrite))) {
+                            if (in != null) {
+                                in.transferTo(out);
+                            }
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    });
+
+                    var statusCode = response.getStatus() != null ? response.getStatus().getCode() : 200;
+                    if (statusCode >= 300) {
+                        throw mapError(statusCode, new HttpClientResponseException("HTTP " + statusCode, response));
+                    }
+
+                    var size = tempFile.length();
+                    if (sizeValidator != null) {
+                        try {
+                            sizeValidator.accept(size);
+                        } catch (IllegalStateException e) {
+                            throw new DownloadFailure(e);
+                        }
+                    }
+
+                    var storageUri = runContext.storage().putFile(tempFile);
+                    success = true;
+                    return new BinaryResponse(storageUri, size, capturedContentDisposition.get());
+                } catch (DownloadFailure df) {
+                    throw df.getCause();
+                } catch (HttpClientResponseException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new IllegalStateException(
+                        "Failed to download file from Mercury: %s. Retry the task.".formatted(e.getMessage()), e
+                    );
+                }
+            } finally {
+                if (!success && tempFile != null && tempFile.exists()) {
+                    tempFile.delete();
+                }
+            }
+        });
     }
 
     private <T> T parseBody(String body, TypeReference<T> typeRef) throws IOException {

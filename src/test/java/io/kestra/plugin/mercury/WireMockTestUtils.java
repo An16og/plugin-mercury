@@ -56,4 +56,29 @@ public final class WireMockTestUtils {
             }
             """.formatted(cardsJson, next, prev);
     }
+
+    public static String statementsPageJson(String statementsJson, String nextPage, String previousPage) {
+        var next = nextPage != null ? "\"%s\"".formatted(nextPage) : "null";
+        var prev = previousPage != null ? "\"%s\"".formatted(previousPage) : "null";
+        return """
+            {
+              "statements": [%s],
+              "page": { "nextPage": %s, "previousPage": %s }
+            }
+            """.formatted(statementsJson, next, prev);
+    }
+
+    public static void stubGetBinary(WireMockServer server, String path, int status, String contentType, String contentDisposition, byte[] body) {
+        var response = aResponse().withStatus(status);
+        if (contentType != null) {
+            response.withHeader("Content-Type", contentType);
+        }
+        if (contentDisposition != null) {
+            response.withHeader("Content-Disposition", contentDisposition);
+        }
+        if (body != null) {
+            response.withBody(body);
+        }
+        server.stubFor(get(urlPathEqualTo(path)).willReturn(response));
+    }
 }

@@ -4,6 +4,7 @@
 
 - Provides plugin components under `io.kestra.plugin.mercury`.
 - Includes tasks under `io.kestra.plugin.mercury.accounts` (`List`, `Get`), `io.kestra.plugin.mercury.transactions` (`List`, `Get`), `io.kestra.plugin.mercury.recipients` (`List`), `io.kestra.plugin.mercury.cards` (`List`), and `io.kestra.plugin.mercury.statements` (`List`, `Download`).
+- Includes triggers under `io.kestra.plugin.mercury.accounts` (`BalanceThresholdTrigger`) and `io.kestra.plugin.mercury.transactions` (`TransactionTrigger`).
 
 ## Why
 
@@ -33,14 +34,17 @@ Infrastructure dependencies (Docker Compose services):
 
 - `io.kestra.plugin.mercury.AbstractMercuryConnection`
 - `io.kestra.plugin.mercury.AbstractMercuryList`
+- `io.kestra.plugin.mercury.AbstractMercuryTrigger`
 - `io.kestra.plugin.mercury.accounts.List`
 - `io.kestra.plugin.mercury.accounts.Get`
+- `io.kestra.plugin.mercury.accounts.BalanceThresholdTrigger`
 - `io.kestra.plugin.mercury.cards.List`
 - `io.kestra.plugin.mercury.recipients.List`
 - `io.kestra.plugin.mercury.statements.List`
 - `io.kestra.plugin.mercury.statements.Download`
 - `io.kestra.plugin.mercury.transactions.List`
 - `io.kestra.plugin.mercury.transactions.Get`
+- `io.kestra.plugin.mercury.transactions.TransactionTrigger`
 
 ### Project Structure
 
@@ -49,9 +53,11 @@ plugin-mercury/
 ├── src/main/java/io/kestra/plugin/mercury/
 │   ├── AbstractMercuryConnection.java
 │   ├── AbstractMercuryList.java
+│   ├── AbstractMercuryTrigger.java
 │   ├── accounts/
 │   │   ├── List.java
-│   │   └── Get.java
+│   │   ├── Get.java
+│   │   └── BalanceThresholdTrigger.java
 │   ├── cards/
 │   │   └── List.java
 │   ├── recipients/
@@ -61,7 +67,8 @@ plugin-mercury/
 │   │   └── Download.java
 │   ├── transactions/
 │   │   ├── List.java
-│   │   └── Get.java
+│   │   ├── Get.java
+│   │   └── TransactionTrigger.java
 │   └── model/            # API response and output models
 ├── src/test/java/io/kestra/plugin/mercury/
 ├── build.gradle

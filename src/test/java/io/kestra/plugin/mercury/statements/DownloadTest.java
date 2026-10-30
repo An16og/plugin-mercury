@@ -12,6 +12,7 @@ import io.kestra.core.models.validations.ModelValidator;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.YamlParser;
 import io.kestra.core.storages.StorageInterface;
+import io.kestra.plugin.core.flow.ForEach;
 import io.kestra.storage.local.LocalStorage;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
@@ -434,11 +435,20 @@ class DownloadTest {
     }
 
     @Test
-    void testForEachPebbleRendering() throws Exception {
+    void testForEachExamplePebbleRendering() throws Exception {
+        var plugin = Download.class.getAnnotation(Plugin.class);
+        assertThat(plugin, notNullValue());
+        var forEachExample = plugin.examples()[1];
+        var code = String.join("\n", forEachExample.code());
+        var flow = YamlParser.parse(code, Flow.class);
+
+        var forEachTask = (ForEach) flow.getTasks().get(1);
+        var downloadTask = (Download) forEachTask.getTasks().getFirst();
+
         var runContext = runContextFactory.of(Map.of(
             "taskrun", Map.of("value", "{\"id\": \"%s\"}".formatted(STATEMENT_ID))
         ));
-        var rendered = runContext.render("{{ fromJson(taskrun.value).id }}");
+        var rendered = runContext.render(downloadTask.getStatementId()).as(String.class).orElseThrow();
         assertThat(rendered, is(STATEMENT_ID));
     }
 

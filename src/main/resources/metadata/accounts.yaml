@@ -1,8 +1,8 @@
 group: io.kestra.plugin.mercury.accounts
 name: "accounts"
 title: "Accounts"
-description: "Tasks for querying Mercury bank accounts."
-body: "Query and inspect Mercury business bank accounts, balances, and routing details within Kestra workflows."
+description: "Tasks and triggers for querying Mercury bank accounts."
+body: "Query and inspect Mercury business bank accounts, balances, and routing details, and trigger executions on minimum balance thresholds within Kestra workflows."
 videos: []
 createdBy: "Kestra Core Team"
 managedBy: "Kestra Core Team"

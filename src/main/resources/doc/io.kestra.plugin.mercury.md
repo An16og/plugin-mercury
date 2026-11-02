@@ -138,6 +138,7 @@ Periodically polls the Mercury API for new transactions in a specific bank accou
   - `pageCap` (default: `100`, min: `1`)
   - `search`
   - `status` (options: `PENDING`, `SENT`, `CANCELLED`, `FAILED`, `REVERSED`, `BLOCKED`)
+- **Outputs:** `size`, `rows` (FETCH), `row` (FETCH_ONE), `uri` (STORE), `transaction` (first new transaction), `account.id`. `fetchType` only shapes the output: every new transaction is fetched and marked as seen. The watermark advances on every successful poll.
 
 ### `io.kestra.plugin.mercury.accounts.BalanceThresholdTrigger`
 
@@ -152,3 +153,4 @@ Periodically polls Mercury bank account balances and triggers an execution when 
   - `baseUrl` (default: `https://api.mercury.com/api/v1`)
   - `interval` (default: `PT5M`)
   - `pageCap` (default: `100`, min: `1`)
+- **Outputs:** `size`, `account` (`id`, `name`, `balance`, `minBalance` of the first account below threshold), `balance`, `accounts[]` (all accounts newly below threshold). Accounts with an unknown balance are skipped.

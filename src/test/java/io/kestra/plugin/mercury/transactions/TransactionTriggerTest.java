@@ -17,7 +17,6 @@ import io.kestra.core.serializers.FileSerde;
 import io.kestra.core.serializers.JacksonMapper;
 import io.kestra.core.serializers.YamlParser;
 import io.kestra.core.storages.kv.KVValueAndMetadata;
-import io.kestra.plugin.mercury.model.Transaction;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -329,7 +328,7 @@ class TransactionTriggerTest {
     }
 
     @Test
-    void testNoNewTransactionsDoesNotTouchState() throws Exception {
+    void testQuietPollAdvancesWatermarkAndKeepsSeenIds() throws Exception {
         var tx1 = transactionJson("tx-001", "2024-01-15T10:00:00Z");
 
         var trigger = TransactionTrigger.builder()
@@ -344,9 +343,7 @@ class TransactionTriggerTest {
         var triggerContext = buildTriggerContext(FLOW_ID, TRIGGER_ID);
 
         var kv = conditionContext.getRunContext().namespaceKv(NAMESPACE);
-        var key = "mercury_tx_" + FLOW_ID.length() + "_" + FLOW_ID + "_"
-            + TRIGGER_ID.length() + "_" + TRIGGER_ID + "_"
-            + ACCOUNT_ID.length() + "_" + ACCOUNT_ID;
+        var key = TransactionTrigger.stateKey(FLOW_ID, TRIGGER_ID, ACCOUNT_ID, null);
 
         var seen = new LinkedHashSet<String>();
         seen.add("tx-001");
@@ -373,10 +370,10 @@ class TransactionTriggerTest {
         var executionOpt = trigger.evaluate(conditionContext, triggerContext);
         assertThat(executionOpt.isEmpty(), is(true));
 
-        // State must remain exactly unchanged
+        // A successful quiet poll must still advance the watermark so the fetched window does not grow
         var val = kv.getValue(key);
         var state = JacksonMapper.ofJson().readValue((String) val.get().value(), TransactionTrigger.State.class);
-        assertThat(state.getWatermark(), is(watermark));
+        assertThat(state.getWatermark().isAfter(watermark), is(true));
         assertThat(state.getSeenIds(), contains("tx-001"));
     }
 
@@ -480,21 +477,57 @@ class TransactionTriggerTest {
 
     @Test
     void testKeyCollisionPrevention() {
-        var flow1 = "a-b";
-        var trig1 = "c";
-        var key1 = "mercury_tx_" + flow1.length() + "_" + flow1 + "_"
-            + trig1.length() + "_" + trig1 + "_"
-            + ACCOUNT_ID.length() + "_" + ACCOUNT_ID;
-
-        var flow2 = "a";
-        var trig2 = "b-c";
-        var key2 = "mercury_tx_" + flow2.length() + "_" + flow2 + "_"
-            + trig2.length() + "_" + trig2 + "_"
-            + ACCOUNT_ID.length() + "_" + ACCOUNT_ID;
+        var key1 = TransactionTrigger.stateKey("a-b", "c", ACCOUNT_ID, null);
+        var key2 = TransactionTrigger.stateKey("a", "b-c", ACCOUNT_ID, null);
 
         assertThat(key1, is(not(key2)));
         assertThat(key1, is("mercury_tx_3_a-b_1_c_36_" + ACCOUNT_ID));
         assertThat(key2, is("mercury_tx_1_a_3_b-c_36_" + ACCOUNT_ID));
+        assertThat(TransactionTrigger.stateKey("a", "b", ACCOUNT_ID, List.Status.SENT), endsWith("_SENT"));
+    }
+
+    @Test
+    void testStateIsStoredUnderTheRealKey() throws Exception {
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                .withBody("{\"total\": 0, \"transactions\": []}")));
+
+        var trigger = TransactionTrigger.builder()
+            .id(TRIGGER_ID)
+            .type(TransactionTrigger.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue("  " + ACCOUNT_ID + "  "))
+            .build();
+
+        var conditionContext = buildConditionContext();
+        trigger.evaluate(conditionContext, buildTriggerContext(FLOW_ID, TRIGGER_ID));
+
+        var kv = conditionContext.getRunContext().namespaceKv(NAMESPACE);
+        assertThat(kv.getValue(TransactionTrigger.stateKey(FLOW_ID, TRIGGER_ID, ACCOUNT_ID, null)).isPresent(), is(true));
+    }
+
+    @Test
+    void testUnreadableStateFailsThePollInsteadOfResettingIt() throws Exception {
+        var trigger = TransactionTrigger.builder()
+            .id(TRIGGER_ID)
+            .type(TransactionTrigger.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(ACCOUNT_ID))
+            .build();
+
+        var conditionContext = buildConditionContext();
+        var kv = conditionContext.getRunContext().namespaceKv(NAMESPACE);
+        var key = TransactionTrigger.stateKey(FLOW_ID, TRIGGER_ID, ACCOUNT_ID, null);
+        var corrupted = "{not valid json";
+        kv.put(key, new KVValueAndMetadata(null, corrupted));
+
+        assertThrows(Exception.class, () -> trigger.evaluate(conditionContext, buildTriggerContext(FLOW_ID, TRIGGER_ID)));
+
+        // No HTTP call and the stored state is untouched: the next poll retries instead of treating it as a first poll
+        assertThat(wireMockServer.getAllServeEvents().isEmpty(), is(true));
+        assertThat(kv.getValue(key).get().value(), is(corrupted));
     }
 
     @Test
@@ -720,5 +753,141 @@ class TransactionTriggerTest {
         var row = (java.util.Map<String, Object>) vars.get("row");
         assertThat(row, notNullValue());
         assertThat(row.get("id"), is("tx-one-1"));
+    }
+
+    @Test
+    void testFetchOneFetchesAllNewTransactionsAndMarksThemSeen() throws Exception {
+        var trigger = TransactionTrigger.builder()
+            .id(TRIGGER_ID)
+            .type(TransactionTrigger.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(ACCOUNT_ID))
+            .fetchType(Property.ofValue(FetchType.FETCH_ONE))
+            .build();
+
+        var conditionContext = buildConditionContext();
+        var triggerContext = buildTriggerContext(FLOW_ID, TRIGGER_ID);
+        var kv = conditionContext.getRunContext().namespaceKv(NAMESPACE);
+        var key = TransactionTrigger.stateKey(FLOW_ID, TRIGGER_ID, ACCOUNT_ID, null);
+        var baseline = TransactionTrigger.State.builder()
+            .watermark(Instant.now().minus(Duration.ofMinutes(10)))
+            .seenIds(new LinkedHashSet<>())
+            .build();
+        kv.put(key, new KVValueAndMetadata(null, JacksonMapper.ofJson().writeValueAsString(baseline)));
+
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                .withBody("""
+                    {"total": 3, "transactions": [%s, %s, %s]}
+                    """.formatted(
+                    transactionJson("tx-3", "2024-01-15T12:00:00Z"),
+                    transactionJson("tx-2", "2024-01-15T11:00:00Z"),
+                    transactionJson("tx-1", "2024-01-15T10:00:00Z")))));
+
+        var opt = trigger.evaluate(conditionContext, triggerContext);
+        assertThat(opt.isPresent(), is(true));
+
+        // The API is asked for the full window, not a single row
+        wireMockServer.verify(1, getRequestedFor(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("limit", equalTo("1000")));
+
+        var vars = opt.get().getTrigger().getVariables();
+        assertThat(vars.get("size"), is(3));
+        @SuppressWarnings("unchecked")
+        var row = (java.util.Map<String, Object>) vars.get("row");
+        assertThat(row.get("id"), is("tx-3"));
+
+        var state = JacksonMapper.ofJson().readValue((String) kv.getValue(key).get().value(), TransactionTrigger.State.class);
+        assertThat(state.getSeenIds(), containsInAnyOrder("tx-1", "tx-2", "tx-3"));
+    }
+
+    @Test
+    void testFetchOnePagesThroughTheWindow() throws Exception {
+        var trigger = TransactionTrigger.builder()
+            .id(TRIGGER_ID)
+            .type(TransactionTrigger.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(ACCOUNT_ID))
+            .fetchType(Property.ofValue(FetchType.FETCH_ONE))
+            .limit(Property.ofValue(2))
+            .build();
+
+        var conditionContext = buildConditionContext();
+        var kv = conditionContext.getRunContext().namespaceKv(NAMESPACE);
+        var key = TransactionTrigger.stateKey(FLOW_ID, TRIGGER_ID, ACCOUNT_ID, null);
+        var baseline = TransactionTrigger.State.builder()
+            .watermark(Instant.now().minus(Duration.ofMinutes(10)))
+            .seenIds(new LinkedHashSet<>())
+            .build();
+        kv.put(key, new KVValueAndMetadata(null, JacksonMapper.ofJson().writeValueAsString(baseline)));
+
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("offset", equalTo("0"))
+            .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                .withBody("{\"total\": 3, \"transactions\": [%s, %s]}".formatted(
+                    transactionJson("tx-3", "2024-01-15T12:00:00Z"), transactionJson("tx-2", "2024-01-15T11:00:00Z")))));
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .withQueryParam("offset", equalTo("2"))
+            .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                .withBody("{\"total\": 3, \"transactions\": [%s]}".formatted(
+                    transactionJson("tx-1", "2024-01-15T10:00:00Z")))));
+
+        var opt = trigger.evaluate(conditionContext, buildTriggerContext(FLOW_ID, TRIGGER_ID));
+        assertThat(opt.isPresent(), is(true));
+        assertThat(opt.get().getTrigger().getVariables().get("size"), is(3));
+    }
+
+    @Test
+    void testExampleExpressionsRenderWithTriggerOutputs() throws Exception {
+        var conditionContext = buildConditionContext();
+        var runContext = conditionContext.getRunContext();
+        var kv = runContext.namespaceKv(NAMESPACE);
+        var key = TransactionTrigger.stateKey(FLOW_ID, TRIGGER_ID, ACCOUNT_ID, null);
+        var baseline = TransactionTrigger.State.builder()
+            .watermark(Instant.now().minus(Duration.ofMinutes(10)))
+            .seenIds(new LinkedHashSet<>())
+            .build();
+        kv.put(key, new KVValueAndMetadata(null, JacksonMapper.ofJson().writeValueAsString(baseline)));
+
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID + "/transactions"))
+            .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                .withBody("{\"total\": 1, \"transactions\": [%s]}".formatted(transactionJson("tx-1", "2024-01-15T10:00:00Z")))));
+
+        for (var fetchType : new FetchType[]{FetchType.FETCH, FetchType.STORE}) {
+            kv.put(key, new KVValueAndMetadata(null, JacksonMapper.ofJson().writeValueAsString(baseline)));
+            var trigger = TransactionTrigger.builder()
+                .id(TRIGGER_ID)
+                .type(TransactionTrigger.class.getName())
+                .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+                .apiToken(Property.ofValue("secret-token:valid-token"))
+                .accountId(Property.ofValue(ACCOUNT_ID))
+                .fetchType(Property.ofValue(fetchType))
+                .build();
+            var vars = trigger.evaluate(conditionContext, buildTriggerContext(FLOW_ID, TRIGGER_ID))
+                .orElseThrow().getTrigger().getVariables();
+            var scope = java.util.Map.<String, Object>of("trigger", vars);
+
+            assertThat(runContext.render("{{ trigger.account.id }}", scope), is(ACCOUNT_ID));
+            assertThat(runContext.render("{{ trigger.size }}", scope), is("1"));
+            if (fetchType == FetchType.FETCH) {
+                assertThat(runContext.render("{{ trigger.transaction.counterpartyName }}", scope), is("Supplier Inc"));
+                assertThat(runContext.render("{{ trigger.rows[0].id }}", scope), is("tx-1"));
+            } else {
+                assertThat(runContext.render("{{ trigger.uri }}", scope), startsWith("kestra://"));
+            }
+        }
+
+        // Every {{ trigger.* }} path used in the examples must be one of the paths rendered above
+        var plugin = TransactionTrigger.class.getAnnotation(Plugin.class);
+        var used = java.util.regex.Pattern.compile("\\{\\{ (trigger\\.[A-Za-z.\\[\\]0-9]+) \\}\\}");
+        var allowed = java.util.Set.of("trigger.size", "trigger.transaction.counterpartyName", "trigger.account.id", "trigger.uri");
+        for (var example : plugin.examples()) {
+            var m = used.matcher(String.join("\n", example.code()));
+            while (m.find()) {
+                assertThat(m.group(1), is(in(allowed)));
+            }
+        }
     }
 }

@@ -308,7 +308,7 @@ public abstract class AbstractMercuryConnection extends Task {
         return totalItems;
     }
 
-    protected static String requireUuid(String value, String field) {
+    public static String requireUuid(String value, String field) {
         if (value == null) {
             throw new IllegalArgumentException(field + " is required");
         }

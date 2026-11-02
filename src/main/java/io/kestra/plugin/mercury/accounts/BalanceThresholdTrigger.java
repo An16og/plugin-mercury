@@ -1,4 +1,3 @@
-
 package io.kestra.plugin.mercury.accounts;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -57,7 +56,7 @@ import java.util.Optional;
                 tasks:
                   - id: alert_low_balance
                     type: io.kestra.plugin.core.log.Log
-                    message: "Accounts below minimum balance: {{ trigger.accounts }}"
+                    message: "Account {{ trigger.account.name }} ({{ trigger.account.id }}) has balance {{ trigger.balance }}, {{ trigger.size }} account(s) below threshold"
 
                 triggers:
                   - id: watch_balance
@@ -76,7 +75,7 @@ import java.util.Optional;
                 tasks:
                   - id: alert_account_balance
                     type: io.kestra.plugin.core.log.Log
-                    message: "Account {{ trigger.accounts[0].name }} dropped below {{ trigger.accounts[0].minBalance }}"
+                    message: "Account {{ trigger.account.id }} balance {{ trigger.balance }} below {{ trigger.account.minBalance }}"
 
                 triggers:
                   - id: watch_specific_account
@@ -143,9 +142,9 @@ public class BalanceThresholdTrigger extends AbstractMercuryTrigger implements T
             throw new IllegalArgumentException("pageCap must be at least 1, got: " + rPageCap);
         }
 
-        var rAccountId = runContext.render(this.accountId).as(String.class).orElse(null);
-        var accountId = (rAccountId != null && !rAccountId.isBlank())
-            ? requireUuid(rAccountId.trim(), "accountId")
+        var rRawAccountId = runContext.render(this.accountId).as(String.class).orElse(null);
+        var rAccountId = (rRawAccountId != null && !rRawAccountId.isBlank())
+            ? AbstractMercuryConnection.requireUuid(rRawAccountId, "accountId")
             : null;
 
         var namespace = context.getNamespace();
@@ -155,34 +154,19 @@ public class BalanceThresholdTrigger extends AbstractMercuryTrigger implements T
 
         var flowId = context.getFlowId();
         var triggerId = context.getTriggerId();
-        var key = "mercury_bal_" + flowId.length() + "_" + flowId + "_"
-            + triggerId.length() + "_" + triggerId
-            + (accountId != null ? "_" + accountId.length() + "_" + accountId : "");
+        var key = stateKey(flowId, triggerId, rAccountId);
 
         var kv = runContext.namespaceKv(namespace);
-        State state = null;
-        try {
-            var kvValueOpt = kv.getValue(key);
-            if (kvValueOpt.isPresent() && kvValueOpt.get().value() != null) {
-                var raw = kvValueOpt.get().value();
-                if (raw instanceof String rawStr && !rawStr.isBlank()) {
-                    state = JacksonMapper.ofJson().readValue(rawStr, State.class);
-                } else if (raw != null) {
-                    state = JacksonMapper.ofJson().convertValue(raw, State.class);
-                }
-            }
-        } catch (Exception ignored) {
-            state = null;
-        }
+        var state = readState(runContext, kv, key, State.class);
 
         java.util.List<Account> accountsToCheck;
-        if (accountId != null) {
+        if (rAccountId != null) {
             var getTask = Get.builder()
                 .id(this.getId() + "_get")
                 .type(Get.class.getName())
                 .baseUrl(this.getBaseUrl())
                 .apiToken(this.getApiToken())
-                .accountId(Property.ofValue(accountId))
+                .accountId(Property.ofValue(rAccountId))
                 .build();
             var getOutput = getTask.run(runContext);
             var single = getOutput.getAccount();
@@ -215,9 +199,15 @@ public class BalanceThresholdTrigger extends AbstractMercuryTrigger implements T
 
         for (var account : eligibleAccounts) {
             var balance = switch (rBalanceType) {
-                case AVAILABLE -> account.getAvailableBalance() != null ? account.getAvailableBalance() : BigDecimal.ZERO;
-                case CURRENT -> account.getCurrentBalance() != null ? account.getCurrentBalance() : BigDecimal.ZERO;
+                case AVAILABLE -> account.getAvailableBalance();
+                case CURRENT -> account.getCurrentBalance();
             };
+
+            // An unknown balance is not zero: skip it and keep its previous state, to avoid false alerts.
+            if (balance == null) {
+                runContext.logger().warn("Account '{}' has no {} balance, skipping it for this poll", account.getId(), rBalanceType);
+                continue;
+            }
 
             var isBelow = balance.compareTo(rMinBalance) < 0;
             var wasBelow = previousBelowMap.getOrDefault(account.getId(), Boolean.FALSE);
@@ -242,6 +232,8 @@ public class BalanceThresholdTrigger extends AbstractMercuryTrigger implements T
         if (!newlyCrossedAlerts.isEmpty()) {
             var output = Output.builder()
                 .size(newlyCrossedAlerts.size())
+                .account(newlyCrossedAlerts.getFirst())
+                .balance(newlyCrossedAlerts.getFirst().getBalance())
                 .accounts(newlyCrossedAlerts)
                 .build();
 
@@ -265,6 +257,13 @@ public class BalanceThresholdTrigger extends AbstractMercuryTrigger implements T
         return Optional.empty();
     }
 
+    // Length-prefixed segments so that flow "a-b" + trigger "c" never collides with flow "a" + trigger "b-c".
+    static String stateKey(String flowId, String triggerId, String accountId) {
+        return "mercury_bal_" + flowId.length() + "_" + flowId + "_"
+            + triggerId.length() + "_" + triggerId
+            + (accountId != null ? "_" + accountId.length() + "_" + accountId : "");
+    }
+
     @Builder
     @Getter
     public static class Output implements io.kestra.core.models.tasks.Output {
@@ -281,6 +280,20 @@ public class BalanceThresholdTrigger extends AbstractMercuryTrigger implements T
                 List of accounts that have newly dropped below the minimum balance threshold."""
         )
         private final java.util.List<AccountAlert> accounts;
+
+        @Schema(
+            title = "First account below threshold",
+            description = """
+                The first account that newly dropped below the threshold. Use `accounts` when several accounts crossed in the same poll."""
+        )
+        private final AccountAlert account;
+
+        @Schema(
+            title = "Balance of the first account below threshold",
+            description = """
+                The evaluated balance of the account exposed in `account`."""
+        )
+        private final BigDecimal balance;
     }
 
     @Builder

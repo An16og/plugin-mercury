@@ -500,18 +500,108 @@ class BalanceThresholdTriggerTest {
 
     @Test
     void testKeyCollisionPrevention() {
-        var flow1 = "a-b";
-        var trig1 = "c";
-        var key1 = "mercury_bal_" + flow1.length() + "_" + flow1 + "_"
-            + trig1.length() + "_" + trig1;
-
-        var flow2 = "a";
-        var trig2 = "b-c";
-        var key2 = "mercury_bal_" + flow2.length() + "_" + flow2 + "_"
-            + trig2.length() + "_" + trig2;
+        var key1 = BalanceThresholdTrigger.stateKey("a-b", "c", null);
+        var key2 = BalanceThresholdTrigger.stateKey("a", "b-c", null);
 
         assertThat(key1, is(not(key2)));
         assertThat(key1, is("mercury_bal_3_a-b_1_c"));
         assertThat(key2, is("mercury_bal_1_a_3_b-c"));
+        assertThat(BalanceThresholdTrigger.stateKey("a", "b", ACCOUNT_ID_1), is("mercury_bal_1_a_1_b_36_" + ACCOUNT_ID_1));
+    }
+
+    @Test
+    void testUnreadableStateFailsThePollInsteadOfReAlerting() throws Exception {
+        var triggerId = "watch-corrupt-" + UUID.randomUUID();
+        var acct = accountJson(ACCOUNT_ID_1, "Low", "active", "mercury", new BigDecimal("100.00"), new BigDecimal("100.00"));
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID_1))
+            .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(acct)));
+
+        var trigger = BalanceThresholdTrigger.builder()
+            .id(triggerId)
+            .type(BalanceThresholdTrigger.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(ACCOUNT_ID_1))
+            .minBalance(Property.ofValue(new BigDecimal("5000.00")))
+            .build();
+
+        var triggerContext = buildTriggerContext(triggerId);
+        var conditionContext = buildConditionContext(trigger, triggerContext);
+        var kv = conditionContext.getRunContext().namespaceKv(NAMESPACE);
+        var key = BalanceThresholdTrigger.stateKey(FLOW_ID, triggerId, ACCOUNT_ID_1);
+        var corrupted = "{not valid json";
+        kv.put(key, new KVValueAndMetadata(null, corrupted));
+
+        assertThrows(Exception.class, () -> trigger.evaluate(conditionContext, triggerContext));
+        assertThat(wireMockServer.getAllServeEvents().isEmpty(), is(true));
+        assertThat(kv.getValue(key).get().value(), is(corrupted));
+    }
+
+    @Test
+    void testMissingBalanceIsUnknownAndDoesNotFire() throws Exception {
+        var triggerId = "watch-missing-" + UUID.randomUUID();
+        // availableBalance is null: must not be treated as zero
+        var acct = accountJson(ACCOUNT_ID_1, "Unknown", "active", "mercury", null, new BigDecimal("100.00"));
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID_1))
+            .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(acct)));
+
+        var trigger = BalanceThresholdTrigger.builder()
+            .id(triggerId)
+            .type(BalanceThresholdTrigger.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(ACCOUNT_ID_1))
+            .minBalance(Property.ofValue(new BigDecimal("5000.00")))
+            .build();
+
+        var triggerContext = buildTriggerContext(triggerId);
+        var conditionContext = buildConditionContext(trigger, triggerContext);
+
+        assertThat(trigger.evaluate(conditionContext, triggerContext).isEmpty(), is(true));
+
+        // The unknown balance leaves the account state untouched
+        var kv = conditionContext.getRunContext().namespaceKv(NAMESPACE);
+        assertThat(kv.getValue(BalanceThresholdTrigger.stateKey(FLOW_ID, triggerId, ACCOUNT_ID_1)).isPresent(), is(false));
+    }
+
+    @Test
+    void testExampleExpressionsRenderWithTriggerOutputs() throws Exception {
+        var triggerId = "watch-render-" + UUID.randomUUID();
+        var acct = accountJson(ACCOUNT_ID_1, "Ops", "active", "mercury", new BigDecimal("100.00"), new BigDecimal("100.00"));
+        wireMockServer.stubFor(get(urlPathEqualTo("/account/" + ACCOUNT_ID_1))
+            .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(acct)));
+
+        var trigger = BalanceThresholdTrigger.builder()
+            .id(triggerId)
+            .type(BalanceThresholdTrigger.class.getName())
+            .baseUrl(Property.ofValue(wireMockServer.baseUrl()))
+            .apiToken(Property.ofValue("secret-token:valid-token"))
+            .accountId(Property.ofValue(ACCOUNT_ID_1))
+            .minBalance(Property.ofValue(new BigDecimal("5000.00")))
+            .build();
+
+        var triggerContext = buildTriggerContext(triggerId);
+        var conditionContext = buildConditionContext(trigger, triggerContext);
+        var vars = trigger.evaluate(conditionContext, triggerContext).orElseThrow().getTrigger().getVariables();
+        var runContext = conditionContext.getRunContext();
+        var scope = Map.<String, Object>of("trigger", vars);
+
+        assertThat(runContext.render("{{ trigger.account.id }}", scope), is(ACCOUNT_ID_1));
+        assertThat(runContext.render("{{ trigger.account.name }}", scope), is("Ops"));
+        assertThat(runContext.render("{{ trigger.account.minBalance }}", scope), startsWith("5000"));
+        assertThat(runContext.render("{{ trigger.balance }}", scope), startsWith("100"));
+        assertThat(runContext.render("{{ trigger.size }}", scope), is("1"));
+        assertThat(runContext.render("{{ trigger.accounts[0].id }}", scope), is(ACCOUNT_ID_1));
+
+        // Every {{ trigger.* }} path used in the examples must be one of the paths rendered above
+        var plugin = BalanceThresholdTrigger.class.getAnnotation(Plugin.class);
+        var used = java.util.regex.Pattern.compile("\\{\\{ (trigger\\.[A-Za-z.\\[\\]0-9]+) \\}\\}");
+        var allowed = java.util.Set.of("trigger.account.id", "trigger.account.name", "trigger.account.minBalance", "trigger.balance", "trigger.size");
+        for (var example : plugin.examples()) {
+            var m = used.matcher(String.join("\n", example.code()));
+            while (m.find()) {
+                assertThat(m.group(1), is(in(allowed)));
+            }
+        }
     }
 }
